@@ -160,6 +160,8 @@ quarantine/
 *.har
 *.ioc.json
 *.ndjson
+!examples/
+!examples/*.ndjson
 *.parquet
 *.feather
 *.msgpack
@@ -176,4 +178,3 @@ models/
 
 # Documentation build output
 docs/_build/
-
