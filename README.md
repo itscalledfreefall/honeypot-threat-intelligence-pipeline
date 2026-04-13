@@ -133,6 +133,7 @@ Copy values from `.env.example` into your shell or local environment:
 
 ```bash
 export ABUSEIPDB_API_KEY="your-key-here"
+export VIRUSTOTAL_API_KEY="your-key-here"
 ```
 
 Run the CLI with enrichment enabled:
@@ -141,6 +142,15 @@ Run the CLI with enrichment enabled:
 PYTHONPATH=src python3 -m honeypot_pipeline.cli \
   examples/cowrie.sample.ndjson \
   --enrich-abuseipdb
+```
+
+Run the CLI with both providers:
+
+```bash
+PYTHONPATH=src python3 -m honeypot_pipeline.cli \
+  examples/cowrie.sample.ndjson \
+  --enrich-abuseipdb \
+  --enrich-virustotal
 ```
 
 Write processed records to disk:
