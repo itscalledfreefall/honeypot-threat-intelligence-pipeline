@@ -11,7 +11,9 @@ requires-python = ">=3.11"
 authors = [
   { name = "Ata Demir Alcinar" }
 ]
-dependencies = []
+dependencies = [
+  "Flask>=3.0.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -20,6 +22,7 @@ dev = [
 
 [project.scripts]
 normalize-cowrie = "honeypot_pipeline.cli:main"
+honeypot-dashboard = "honeypot_pipeline.dashboard:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

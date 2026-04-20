@@ -45,6 +45,8 @@ This is the right first step because all later features depend on trustworthy ev
   Assigns a simple attack category and severity to each event.
 - `src/honeypot_pipeline/cli.py`
   Small command-line entry point for normalizing a Cowrie log file and exporting results.
+- `src/honeypot_pipeline/dashboard.py`
+  Runs a read-only web dashboard over processed event records and summaries.
 - `tests/`
   Automated tests for the parser, classification, enrichment, and output helpers.
 
@@ -127,6 +129,12 @@ The pipeline now also supports:
 2. writing processed events to a JSONL output file
 3. writing a batch summary JSON document
 
+The project now also includes:
+
+1. a local Flask dashboard for browsing processed honeypot events
+2. event filtering by IP, event type, attack category, and protocol
+3. detail views for enrichment and raw event inspection
+
 ## Environment Variables
 
 Copy values from `.env.example` into your shell or local environment:
@@ -161,3 +169,13 @@ PYTHONPATH=src python3 -m honeypot_pipeline.cli \
   --output-file exports/cowrie.records.jsonl \
   --summary-file reports/generated/cowrie.summary.json
 ```
+
+Run the dashboard against saved output:
+
+```bash
+honeypot-dashboard \
+  --records-file exports/cowrie.records.jsonl \
+  --summary-file reports/generated/cowrie.summary.json
+```
+
+Then open `http://127.0.0.1:5000`.
