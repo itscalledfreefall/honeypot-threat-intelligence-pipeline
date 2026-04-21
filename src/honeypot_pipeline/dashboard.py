@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, abort, render_template_string, request
+from flask import Flask, abort, render_template_string, request, send_file
 
 from .dashboard_data import filter_records, get_record_by_id, load_dataset
+from .reporting import build_markdown_report, collect_blocklist_ips, get_malicious_records, is_record_malicious
 
 _BASE_TEMPLATE = """
 <!doctype html>
@@ -16,6 +18,9 @@ _BASE_TEMPLATE = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }}</title>
+  {% if auto_refresh_seconds %}
+  <meta http-equiv="refresh" content="{{ auto_refresh_seconds }}">
+  {% endif %}
   <style>
     :root {
       --bg: #f3efe6;
@@ -201,6 +206,20 @@ _BASE_TEMPLATE = """
       background: transparent;
       color: var(--accent);
     }
+    .button.ghost {
+      background: rgba(255,255,255,0.62);
+      color: var(--ink);
+      border-color: var(--line);
+    }
+    .stack {
+      display: grid;
+      gap: 6px;
+    }
+    .code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      color: var(--muted);
+    }
     .detail-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -215,6 +234,21 @@ _BASE_TEMPLATE = """
       font-size: 13px;
       line-height: 1.45;
       font-family: "SFMono-Regular", Consolas, monospace;
+    }
+    .kv {
+      display: grid;
+      gap: 10px;
+    }
+    .kv .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(215,209,197,0.7);
+    }
+    .kv .row:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
     }
     .event-meta {
       display: grid;
@@ -243,6 +277,9 @@ _BASE_TEMPLATE = """
         <a href="/">Overview</a>
         <a href="/events">Events</a>
       </nav>
+      {% if auto_refresh_seconds %}
+      <div class="muted">Auto-refresh every {{ auto_refresh_seconds }} seconds</div>
+      {% endif %}
     </section>
     {{ content|safe }}
   </main>
@@ -268,6 +305,23 @@ _OVERVIEW_CONTENT = """
     <div class="label">Skipped Malformed Lines</div>
     <div class="value">{{ skipped_lines }}</div>
   </article>
+  <article class="card">
+    <div class="label">Malicious Events</div>
+    <div class="value">{{ malicious_event_count }}</div>
+  </article>
+  <article class="card">
+    <div class="label">Blocklist Candidates</div>
+    <div class="value">{{ blocklist_count }}</div>
+  </article>
+</section>
+
+<section class="panel">
+  <h2>Safe Action Outputs</h2>
+  <div class="actions">
+    <a class="button" href="/exports/blocklist.txt">Download Blocklist</a>
+    <a class="button secondary" href="/exports/malicious.json">Download Malicious Records</a>
+    <a class="button ghost" href="/exports/report.md">Download Markdown Report</a>
+  </div>
 </section>
 
 <section class="panel">
@@ -278,6 +332,7 @@ _OVERVIEW_CONTENT = """
         <div>
           <div><strong>{{ record.event_type }}</strong></div>
           <div class="muted">{{ record.timestamp or "No timestamp" }} | {{ record.source_ip or "No source IP" }}</div>
+          <div class="code">{{ record.command_preview or record.url or "No command / URL" }}</div>
         </div>
         <div><a href="/events/{{ record._record_id }}">View</a></div>
       </li>
@@ -341,6 +396,15 @@ _EVENTS_CONTENT = """
           {% endfor %}
         </select>
       </label>
+      <label>Refresh
+        <select name="refresh">
+          {% for option in refresh_options %}
+            <option value="{{ option }}" {% if option == filters.refresh %}selected{% endif %}>
+              {% if option == "0" %}Off{% else %}{{ option }}s{% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
     </div>
     <div class="actions">
       <label><input type="checkbox" name="malicious_only" value="1" {% if filters.malicious_only %}checked{% endif %}> Malicious only</label>
@@ -353,6 +417,11 @@ _EVENTS_CONTENT = """
 <section class="panel">
   <h2>Event Log</h2>
   <p class="muted">Showing {{ records|length }} events.</p>
+  <div class="actions">
+    <a class="button" href="/exports/blocklist.txt?{{ export_query }}">Blocklist</a>
+    <a class="button secondary" href="/exports/malicious.json?{{ export_query }}">Malicious JSON</a>
+    <a class="button ghost" href="/exports/report.md?{{ export_query }}">Markdown Report</a>
+  </div>
 </section>
 
 <section class="table-wrap">
@@ -361,7 +430,9 @@ _EVENTS_CONTENT = """
       <tr>
         <th>Timestamp</th>
         <th>Source IP</th>
+        <th>Auth / Session</th>
         <th>Event Type</th>
+        <th>Observed Command</th>
         <th>Category</th>
         <th>Protocol</th>
         <th>Threat Intel</th>
@@ -373,7 +444,19 @@ _EVENTS_CONTENT = """
         <tr>
           <td>{{ record.timestamp or "-" }}</td>
           <td>{{ record.source_ip or "-" }}</td>
+          <td>
+            <div class="stack">
+              <div>{{ record.username or "-" }} / {{ record.password or "-" }}</div>
+              <div class="code">{{ record.session_id or "-" }}</div>
+            </div>
+          </td>
           <td>{{ record.event_type }}</td>
+          <td>
+            <div class="stack">
+              <div>{{ record.command_preview or "-" }}</div>
+              <div class="code">{{ record.url or "" }}</div>
+            </div>
+          </td>
           <td>
             {% set category = record.classification.attack_category if record.classification else "unknown" %}
             {% set severity = record.classification.severity if record.classification else "low" %}
@@ -395,7 +478,7 @@ _EVENTS_CONTENT = """
         </tr>
       {% else %}
         <tr>
-          <td colspan="7">No events matched the current filters.</td>
+          <td colspan="9">No events matched the current filters.</td>
         </tr>
       {% endfor %}
     </tbody>
@@ -425,17 +508,53 @@ _DETAIL_CONTENT = """
 </section>
 
 <section class="detail-grid">
+  <section class="panel">
+    <h2>Normalized Fields</h2>
+    <div class="kv">
+      <div class="row"><span>Session</span><strong>{{ record.session_id or "-" }}</strong></div>
+      <div class="row"><span>Username</span><strong>{{ record.username or "-" }}</strong></div>
+      <div class="row"><span>Password</span><strong>{{ record.password or "-" }}</strong></div>
+      <div class="row"><span>Command</span><strong>{{ record.command or "-" }}</strong></div>
+      <div class="row"><span>URL</span><strong>{{ record.url or "-" }}</strong></div>
+      <div class="row"><span>Source Port</span><strong>{{ record.source_port or "-" }}</strong></div>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Indicators</h2>
+    <pre>{{ indicators_json }}</pre>
+  </section>
+</section>
+
+<section class="detail-grid">
+  <section class="panel">
+    <h2>Classification</h2>
+    <pre>{{ classification_json }}</pre>
+  </section>
+  <section class="panel">
+    <h2>Threat Intel</h2>
+    <pre>{{ threat_intel_json }}</pre>
+  </section>
+</section>
+
+<section class="detail-grid">
   <pre>{{ record_json }}</pre>
   <pre>{{ raw_event_json }}</pre>
 </section>
 """
 
 
-def _render_page(title: str, subtitle: str, content: str, **context: Any) -> str:
+def _render_page(
+    title: str,
+    subtitle: str,
+    content: str,
+    auto_refresh_seconds: int | None = None,
+    **context: Any,
+) -> str:
     return render_template_string(
         _BASE_TEMPLATE,
         title=title,
         subtitle=subtitle,
+        auto_refresh_seconds=auto_refresh_seconds,
         content=render_template_string(content, **context),
     )
 
@@ -456,21 +575,56 @@ def _sorted_category_options(records: list[dict[str, Any]]) -> list[str]:
     return sorted(values)
 
 
+def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(record)
+    command = normalized.get("command")
+    if isinstance(command, str) and command:
+        preview = command
+    else:
+        url = normalized.get("url")
+        preview = url if isinstance(url, str) else ""
+    if len(preview) > 90:
+        preview = preview[:87] + "..."
+    normalized["command_preview"] = preview
+    return normalized
+
+
+def _build_query_export(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str], str]:
+    malicious_records = get_malicious_records(records)
+    blocklist_ips = collect_blocklist_ips(records)
+    report = build_markdown_report(records, {"total_events": len(records), "unique_source_ips": len({r.get("source_ip") for r in records if r.get("source_ip")})}, blocklist_ips)
+    return malicious_records, blocklist_ips, report
+
+
 def create_app(records_path: Path, summary_path: Path | None = None) -> Flask:
     app = Flask(__name__)
     app.config["RECORDS_PATH"] = records_path
     app.config["SUMMARY_PATH"] = summary_path
 
     def get_dataset():
-        return load_dataset(
+        dataset = load_dataset(
             records_path=Path(app.config["RECORDS_PATH"]),
             summary_path=Path(app.config["SUMMARY_PATH"]) if app.config["SUMMARY_PATH"] else None,
         )
+        dataset.records = [_normalize_record(record) for record in dataset.records]
+        return dataset
+
+    def get_refresh_seconds() -> int | None:
+        refresh = request.args.get("refresh", "").strip()
+        if not refresh or refresh == "0":
+            return None
+        try:
+            seconds = int(refresh)
+        except ValueError:
+            return None
+        return seconds if seconds > 0 else None
 
     @app.route("/")
     def overview() -> str:
         dataset = get_dataset()
         summary = dataset.summary
+        malicious_records = get_malicious_records(dataset.records)
+        blocklist_ips = collect_blocklist_ips(dataset.records)
         top_attack_category = "none"
         category_counts = summary.get("by_attack_category")
         if isinstance(category_counts, dict) and category_counts:
@@ -480,8 +634,11 @@ def create_app(records_path: Path, summary_path: Path | None = None) -> Flask:
             title="Overview",
             subtitle="Read-only dashboard over processed honeypot event records.",
             content=_OVERVIEW_CONTENT,
+            auto_refresh_seconds=get_refresh_seconds(),
             summary=summary,
             skipped_lines=dataset.skipped_lines,
+            malicious_event_count=len(malicious_records),
+            blocklist_count=len(blocklist_ips),
             top_attack_category=top_attack_category,
             recent_records=dataset.records[:8],
         )
@@ -494,6 +651,7 @@ def create_app(records_path: Path, summary_path: Path | None = None) -> Flask:
             "event_type": request.args.get("event_type", "").strip(),
             "attack_category": request.args.get("attack_category", "").strip(),
             "protocol": request.args.get("protocol", "").strip(),
+            "refresh": request.args.get("refresh", "").strip() or "0",
             "malicious_only": request.args.get("malicious_only") == "1",
         }
         records = filter_records(
@@ -504,16 +662,20 @@ def create_app(records_path: Path, summary_path: Path | None = None) -> Flask:
             protocol=filters["protocol"] or None,
             malicious_only=filters["malicious_only"],
         )
+        export_query = request.query_string.decode("utf-8")
 
         return _render_page(
             title="Event Log",
             subtitle="Filter normalized and enriched honeypot events without changing the underlying data.",
             content=_EVENTS_CONTENT,
+            auto_refresh_seconds=get_refresh_seconds(),
             filters=filters,
             records=records,
+            export_query=export_query,
             event_types=_sorted_options(dataset.records, "event_type"),
             attack_categories=_sorted_category_options(dataset.records),
             protocols=_sorted_options(dataset.records, "protocol"),
+            refresh_options=["0", "3", "5", "10"],
         )
 
     @app.route("/events/<int:record_id>")
@@ -529,9 +691,69 @@ def create_app(records_path: Path, summary_path: Path | None = None) -> Flask:
             title="Event Detail",
             subtitle="Detailed inspection of a single honeypot event and its enrichment results.",
             content=_DETAIL_CONTENT,
+            auto_refresh_seconds=get_refresh_seconds(),
             record=record,
+            indicators_json=json.dumps(record.get("indicators", {}), ensure_ascii=True, indent=2, sort_keys=True),
+            classification_json=json.dumps(record.get("classification", {}), ensure_ascii=True, indent=2, sort_keys=True),
+            threat_intel_json=json.dumps(record.get("threat_intel", {}), ensure_ascii=True, indent=2, sort_keys=True),
             record_json=json.dumps(record, ensure_ascii=True, indent=2, sort_keys=True),
             raw_event_json=raw_event_json,
+        )
+
+    def get_filtered_records() -> list[dict[str, Any]]:
+        dataset = get_dataset()
+        return filter_records(
+            dataset.records,
+            source_ip=request.args.get("source_ip", "").strip() or None,
+            event_type=request.args.get("event_type", "").strip() or None,
+            attack_category=request.args.get("attack_category", "").strip() or None,
+            protocol=request.args.get("protocol", "").strip() or None,
+            malicious_only=request.args.get("malicious_only") == "1",
+        )
+
+    @app.route("/exports/blocklist.txt")
+    def export_blocklist():
+        records = get_filtered_records()
+        blocklist_ips = collect_blocklist_ips(records)
+        payload = "\n".join(blocklist_ips) + ("\n" if blocklist_ips else "")
+        return send_file(
+            BytesIO(payload.encode("utf-8")),
+            mimetype="text/plain; charset=utf-8",
+            as_attachment=True,
+            download_name="blocklist.txt",
+        )
+
+    @app.route("/exports/malicious.json")
+    def export_malicious_json():
+        records = get_filtered_records()
+        malicious_records = get_malicious_records(records)
+        payload = json.dumps(
+            {
+                "malicious_record_count": len(malicious_records),
+                "records": malicious_records,
+            },
+            ensure_ascii=True,
+            indent=2,
+            sort_keys=True,
+        )
+        return send_file(
+            BytesIO(payload.encode("utf-8")),
+            mimetype="application/json",
+            as_attachment=True,
+            download_name="malicious-records.json",
+        )
+
+    @app.route("/exports/report.md")
+    def export_report_markdown():
+        records = get_filtered_records()
+        dataset = get_dataset()
+        blocklist_ips = collect_blocklist_ips(records)
+        report = build_markdown_report(records, dataset.summary, blocklist_ips)
+        return send_file(
+            BytesIO(report.encode("utf-8")),
+            mimetype="text/markdown; charset=utf-8",
+            as_attachment=True,
+            download_name="honeypot-report.md",
         )
 
     return app

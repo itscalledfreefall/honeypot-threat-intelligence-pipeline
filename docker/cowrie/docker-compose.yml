@@ -1,0 +1,13 @@
+services:
+  cowrie:
+    image: cowrie/cowrie:latest
+    container_name: honeypot-cowrie
+    restart: unless-stopped
+    ports:
+      - "2222:2222"
+    environment:
+      COWRIE_TELNET_ENABLED: "no"
+    volumes:
+      - ../../data/raw/cowrie/log:/cowrie/cowrie-git/var/log/cowrie
+      - ../../data/raw/cowrie/lib:/cowrie/cowrie-git/var/lib/cowrie
+      - ./etc/userdb.txt:/cowrie/cowrie-git/etc/userdb.txt:ro

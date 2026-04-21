@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 from .abuseipdb import AbuseIPDBClient
@@ -12,6 +14,28 @@ from .settings import Settings
 from .storage import append_jsonl, write_json_document
 from .summary import PipelineSummary
 from .virustotal import VirusTotalClient
+
+
+def iter_input_lines(
+    input_file: Path,
+    follow: bool = False,
+    poll_interval: float = 1.0,
+    max_idle_polls: int | None = None,
+) -> Iterator[str]:
+    with input_file.open("r", encoding="utf-8") as handle:
+        idle_polls = 0
+        while True:
+            line = handle.readline()
+            if line:
+                idle_polls = 0
+                yield line
+                continue
+            if not follow:
+                break
+            if max_idle_polls is not None and idle_polls >= max_idle_polls:
+                break
+            idle_polls += 1
+            time.sleep(poll_interval)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,6 +83,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Optional JSON summary file describing the processed batch.",
     )
+    parser.add_argument(
+        "--follow",
+        action="store_true",
+        help="Keep watching the input file for appended Cowrie log lines.",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=1.0,
+        help="Polling interval in seconds when --follow is enabled.",
+    )
     return parser
 
 
@@ -91,8 +126,14 @@ def main() -> int:
             base_url=settings.virustotal_base_url,
         )
 
-    with args.input_file.open("r", encoding="utf-8") as handle:
-        for event in iter_normalized_cowrie_events(handle):
+    try:
+        for event in iter_normalized_cowrie_events(
+            iter_input_lines(
+                args.input_file,
+                follow=args.follow,
+                poll_interval=args.poll_interval,
+            )
+        ):
             if abuseipdb_client is not None or virustotal_client is not None:
                 record = enrich_event_with_threat_intel(
                     event,
@@ -105,13 +146,16 @@ def main() -> int:
                 record = build_event_record(event)
 
             summary.add_record(record)
-            print(json.dumps(record, ensure_ascii=True))
+            print(json.dumps(record, ensure_ascii=True), flush=True)
 
             if args.output_file is not None:
                 append_jsonl(args.output_file, record)
 
-    if args.summary_file is not None:
-        write_json_document(args.summary_file, summary.to_dict())
+            if args.summary_file is not None:
+                write_json_document(args.summary_file, summary.to_dict())
+    finally:
+        if args.summary_file is not None:
+            write_json_document(args.summary_file, summary.to_dict())
 
     return 0
 

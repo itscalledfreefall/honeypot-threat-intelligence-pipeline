@@ -134,6 +134,9 @@ The project now also includes:
 1. a local Flask dashboard for browsing processed honeypot events
 2. event filtering by IP, event type, attack category, and protocol
 3. detail views for enrichment and raw event inspection
+4. optional auto-refresh for a live demo while new records are appended
+5. safe action outputs like downloadable blocklists and markdown reports
+6. a Docker-based Cowrie lab path and helper script for live demos
 
 ## Environment Variables
 
@@ -170,6 +173,17 @@ PYTHONPATH=src python3 -m honeypot_pipeline.cli \
   --summary-file reports/generated/cowrie.summary.json
 ```
 
+Follow a live Cowrie log file and keep appending processed records:
+
+```bash
+PYTHONPATH=src python3 -m honeypot_pipeline.cli \
+  /path/to/cowrie.json \
+  --follow \
+  --poll-interval 1 \
+  --output-file exports/cowrie.records.jsonl \
+  --summary-file reports/generated/cowrie.summary.json
+```
+
 Run the dashboard against saved output:
 
 ```bash
@@ -179,3 +193,40 @@ honeypot-dashboard \
 ```
 
 Then open `http://127.0.0.1:5000`.
+
+For a live demo, add `?refresh=3` to the events page URL to auto-refresh every 3 seconds.
+
+Generate a report bundle from saved output:
+
+```bash
+honeypot-report \
+  --records-file exports/cowrie.records.jsonl \
+  --summary-file reports/generated/cowrie.summary.json \
+  --output-dir reports/generated/demo-bundle
+```
+
+## Live Lab Demo
+
+This repository now includes:
+
+- a Cowrie Docker setup in [docker-compose.yml](/home/fe/honeypot-threat-intelligence-pipeline/docker/cowrie/docker-compose.yml)
+- a lab helper script in [lab-demo.sh](/home/fe/honeypot-threat-intelligence-pipeline/scripts/lab-demo.sh)
+- a full walkthrough in [live-lab-demo.md](/home/fe/honeypot-threat-intelligence-pipeline/docs/live-lab-demo.md)
+
+Quick flow:
+
+```bash
+scripts/lab-demo.sh up-cowrie
+scripts/lab-demo.sh pipeline
+scripts/lab-demo.sh dashboard
+```
+
+Then, from another machine:
+
+```bash
+ssh -p 2222 root@<target-ip>
+```
+
+Open:
+
+`http://127.0.0.1:5000/events?refresh=3`
