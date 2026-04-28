@@ -178,3 +178,5 @@ models/
 
 # Documentation build output
 docs/_build/
+AGENTS.md
+CLAUDE.md

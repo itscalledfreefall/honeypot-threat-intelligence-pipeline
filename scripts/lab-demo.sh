@@ -7,6 +7,7 @@ COWRIE_LOG="${ROOT_DIR}/data/raw/cowrie/log/cowrie.json"
 RECORDS_FILE="${ROOT_DIR}/exports/cowrie.records.jsonl"
 SUMMARY_FILE="${ROOT_DIR}/reports/generated/cowrie.summary.json"
 REPORT_DIR="${ROOT_DIR}/reports/generated/demo-bundle"
+FRONTEND_DIR="${ROOT_DIR}/sharingan-frontend"
 
 usage() {
   cat <<'EOF'
@@ -17,7 +18,8 @@ Commands:
   down-cowrie     Stop and remove the Cowrie Docker container
   cowrie-logs     Follow Cowrie container logs
   pipeline        Run the threat-intelligence pipeline in live follow mode
-  dashboard       Run the local dashboard against the generated outputs
+  api             Run the Flask JSON API backend (port 5000)
+  dashboard       Run the Sharingan React frontend (port 5173)
   report          Generate the report bundle from current saved outputs
   paths           Print the important file paths and attack target
 EOF
@@ -38,6 +40,12 @@ ensure_dirs() {
     "${ROOT_DIR}/reports/generated"
 }
 
+ensure_files() {
+  ensure_dirs
+  touch "${COWRIE_LOG}"
+  touch "${RECORDS_FILE}"
+}
+
 compose_cmd() {
   docker compose -f "${COMPOSE_FILE}" "$@"
 }
@@ -55,21 +63,48 @@ case "${1:-}" in
     ;;
   pipeline)
     require_venv
-    ensure_dirs
+    ensure_files
+    # Source .env if it exists
+    if [[ -f "${ROOT_DIR}/.env" ]]; then
+      set -a
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
+    ENRICH_FLAGS=""
+    if [[ -n "${ABUSEIPDB_API_KEY:-}" && "${ABUSEIPDB_API_KEY}" != "replace-with-your-api-key" ]]; then
+      ENRICH_FLAGS="${ENRICH_FLAGS} --enrich-abuseipdb"
+    fi
+    if [[ -n "${VIRUSTOTAL_API_KEY:-}" && "${VIRUSTOTAL_API_KEY}" != "replace-with-your-api-key" ]]; then
+      ENRICH_FLAGS="${ENRICH_FLAGS} --enrich-virustotal"
+    fi
     exec "${ROOT_DIR}/.venv/bin/python" -m honeypot_pipeline.cli \
       "${COWRIE_LOG}" \
       --follow \
       --poll-interval 1 \
-      --enrich-abuseipdb \
-      --enrich-virustotal \
+      ${ENRICH_FLAGS} \
       --output-file "${RECORDS_FILE}" \
       --summary-file "${SUMMARY_FILE}"
     ;;
-  dashboard)
+  api)
     require_venv
+    ensure_files
+    # Source .env if it exists
+    if [[ -f "${ROOT_DIR}/.env" ]]; then
+      set -a
+      source "${ROOT_DIR}/.env"
+      set +a
+    fi
     exec "${ROOT_DIR}/.venv/bin/honeypot-dashboard" \
       --records-file "${RECORDS_FILE}" \
-      --summary-file "${SUMMARY_FILE}"
+      --summary-file "${SUMMARY_FILE}" \
+      --host 0.0.0.0
+    ;;
+  dashboard)
+    if [[ ! -d "${FRONTEND_DIR}/node_modules" ]]; then
+      echo "Installing frontend dependencies..."
+      (cd "${FRONTEND_DIR}" && npm install)
+    fi
+    exec npx --prefix "${FRONTEND_DIR}" vite --host 0.0.0.0
     ;;
   report)
     require_venv
@@ -85,7 +120,8 @@ Cowrie JSON log:   ${COWRIE_LOG}
 Records JSONL:     ${RECORDS_FILE}
 Summary JSON:      ${SUMMARY_FILE}
 Report bundle:     ${REPORT_DIR}
-Dashboard URL:     http://127.0.0.1:5000/events?refresh=3
+API URL:           http://127.0.0.1:5000/api/summary
+Dashboard URL:     http://127.0.0.1:5173/dashboard
 EOF
     ;;
   *)
