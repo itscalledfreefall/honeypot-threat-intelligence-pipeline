@@ -612,7 +612,58 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
     d = dict(row)
-    # Parse JSON fields back
+
+    # ── Reconstruct nested classification from flat columns ──────────
+    attack_cat = d.pop("attack_category", None)
+    severity = d.pop("severity", None)
+    class_reason = d.pop("classification_reason", None)
+    d["classification"] = {
+        "attack_category": attack_cat or "unknown",
+        "severity": severity or "low",
+        "reason": class_reason or "",
+        "target_profile": "server",
+        "service_type": d.get("protocol") or "unknown",
+    }
+
+    # ── Reconstruct nested threat_intel from flat ti_* columns ──────
+    ti_status = d.pop("ti_status", None)
+    ti_confidence = d.pop("ti_confidence", None)
+    ti_is_malicious = d.pop("ti_is_malicious", None)
+    ti_raw = d.pop("ti_raw_result", None)
+    abuse_score = d.pop("abuseipdb_score", None)
+    abuse_mal = d.pop("abuseipdb_is_malicious", None)
+    vt_mal = d.pop("virustotal_malicious", None)
+    vt_sus = d.pop("virustotal_suspicious", None)
+    vt_is_mal = d.pop("virustotal_is_malicious", None)
+
+    if ti_status is not None:
+        d["threat_intel"] = {
+            "status": ti_status,
+            "lookup_ip": d.get("source_ip"),
+            "score": {
+                "is_malicious": bool(ti_is_malicious),
+                "confidence": ti_confidence or "low",
+                "malicious_provider_count": (1 if abuse_mal else 0) + (1 if vt_is_mal else 0),
+                "malicious_providers": [],
+            },
+            "providers": {
+                "abuseipdb": {
+                    "status": "completed",
+                    "is_malicious": bool(abuse_mal),
+                    "result": {"abuse_confidence_score": abuse_score},
+                },
+                "virustotal": {
+                    "status": "completed",
+                    "is_malicious": bool(vt_is_mal),
+                    "result": {"malicious": vt_mal, "suspicious": vt_sus},
+                },
+            } if abuse_score is not None or vt_mal is not None else {},
+            "raw_result": ti_raw,
+        }
+    else:
+        d["threat_intel"] = None
+
+    # ── Parse JSON fields ───────────────────────────────────────────
     for key in ("raw_event", "raw_result"):
         val = d.get(key)
         if isinstance(val, str):
@@ -620,4 +671,5 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
                 d[key] = json.loads(val)
             except json.JSONDecodeError:
                 pass
+
     return d
