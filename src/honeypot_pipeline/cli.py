@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .abuseipdb import AbuseIPDBClient
 from .cowrie import iter_normalized_cowrie_events
+from .database import Database
 from .enrichment import enrich_event_with_threat_intel
 from .records import build_event_record
 from .settings import Settings
@@ -94,6 +95,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="Polling interval in seconds when --follow is enabled.",
     )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        help="Optional SQLite database path. Defaults to DATABASE_URL env var or data/honeypot.db.",
+    )
+    parser.add_argument(
+        "--no-db",
+        action="store_true",
+        help="Disable database writes even if DATABASE_URL is set.",
+    )
     return parser
 
 
@@ -126,6 +137,14 @@ def main() -> int:
             base_url=settings.virustotal_base_url,
         )
 
+    # ── Database setup ──────────────────────────────────────────────────
+    db: Database | None = None
+    use_db = not args.no_db
+    if use_db:
+        db_path = args.db or Path(settings.database_url)
+        db = Database(db_path)
+        db.initialize()
+
     try:
         for event in iter_normalized_cowrie_events(
             iter_input_lines(
@@ -153,9 +172,20 @@ def main() -> int:
 
             if args.summary_file is not None:
                 write_json_document(args.summary_file, summary.to_dict())
+
+            # ── Database writes ──────────────────────────────────────
+            if db is not None:
+                event_id = db.insert_event(record)
+                if event_id is not None:
+                    threat_intel = record.get("threat_intel")
+                    if isinstance(threat_intel, dict) and threat_intel.get("status") not in (None, "not_requested"):
+                        db.insert_threat_intel(event_id, threat_intel)
+                    db.upsert_attack_session(record)
     finally:
         if args.summary_file is not None:
             write_json_document(args.summary_file, summary.to_dict())
+        if db is not None:
+            db.close()
 
     return 0
 

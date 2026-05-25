@@ -25,6 +25,7 @@ dev = [
 normalize-cowrie = "honeypot_pipeline.cli:main"
 honeypot-dashboard = "honeypot_pipeline.dashboard:main"
 honeypot-report = "honeypot_pipeline.reporting:main"
+honeypot-block = "honeypot_pipeline.response:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .database import Database
 from .summary import PipelineSummary
 
 
@@ -13,6 +14,37 @@ class DashboardDataset:
     records: list[dict[str, Any]]
     skipped_lines: int
     summary: dict[str, Any]
+
+
+# ── Database-backed loading (primary) ────────────────────────────────────
+
+
+def load_dataset_from_db(
+    db_path: Path | str,
+    source_ip: str | None = None,
+    event_type: str | None = None,
+    attack_category: str | None = None,
+    protocol: str | None = None,
+    malicious_only: bool = False,
+) -> DashboardDataset:
+    """Load dashboard data from the SQLite database."""
+    db = Database(db_path)
+    db.initialize()
+
+    records, _ = db.query_events(
+        source_ip=source_ip,
+        event_type=event_type,
+        attack_category=attack_category,
+        protocol=protocol,
+        malicious_only=malicious_only,
+    )
+    summary = db.get_summary()
+    db.close()
+
+    return DashboardDataset(records=records, skipped_lines=0, summary=summary)
+
+
+# ── JSONL-backed loading (fallback) ─────────────────────────────────────
 
 
 def _timestamp_sort_key(record: dict[str, Any]) -> tuple[int, str]:
@@ -73,6 +105,9 @@ def load_dataset(records_path: Path, summary_path: Path | None = None) -> Dashbo
     records, skipped_lines = load_records(records_path)
     summary = load_summary(summary_path) or derive_summary(records)
     return DashboardDataset(records=records, skipped_lines=skipped_lines, summary=summary)
+
+
+# ── Filtering (works on in-memory records) ──────────────────────────────
 
 
 def filter_records(

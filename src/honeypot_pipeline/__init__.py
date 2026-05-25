@@ -13,6 +13,7 @@ from .reporting import (
     get_malicious_records,
     is_record_malicious,
 )
+from .response import FirewallManager
 from .records import build_event_record
 from .settings import Settings
 from .summary import PipelineSummary
@@ -47,6 +48,7 @@ __all__ = [
     "export_report_bundle",
     "extract_indicators",
     "filter_records",
+    "FirewallManager",
     "get_malicious_records",
     "is_record_malicious",
     "iter_normalized_cowrie_events",

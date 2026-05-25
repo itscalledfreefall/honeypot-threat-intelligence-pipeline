@@ -10,6 +10,7 @@ class Settings:
     abuseipdb_base_url: str
     virustotal_api_key: str | None
     virustotal_base_url: str
+    database_url: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -23,5 +24,9 @@ class Settings:
             virustotal_base_url=os.getenv(
                 "VIRUSTOTAL_BASE_URL",
                 "https://www.virustotal.com/api/v3/ip_addresses",
+            ),
+            database_url=os.getenv(
+                "DATABASE_URL",
+                "data/honeypot.db",
             ),
         )

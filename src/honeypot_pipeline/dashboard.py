@@ -10,8 +10,16 @@ from typing import Any
 from flask import Flask, abort, jsonify, request, send_file
 from flask_cors import CORS
 
-from .dashboard_data import filter_records, get_record_by_id, load_dataset
+from .dashboard_data import (
+    DashboardDataset,
+    filter_records,
+    get_record_by_id,
+    load_dataset,
+    load_dataset_from_db,
+)
+from .database import Database
 from .reporting import build_markdown_report, collect_blocklist_ips, get_malicious_records
+from .settings import Settings
 
 
 def _normalize_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -44,13 +52,36 @@ def _sorted_category_options(records: list[dict[str, Any]]) -> list[str]:
     return sorted(values)
 
 
-def create_app(records_path: Path, summary_path: Path | None = None) -> Flask:
+def create_app(
+    records_path: Path,
+    summary_path: Path | None = None,
+    db_path: Path | None = None,
+) -> Flask:
     app = Flask(__name__)
     CORS(app)
     app.config["RECORDS_PATH"] = records_path
     app.config["SUMMARY_PATH"] = summary_path
+    app.config["DB_PATH"] = db_path
 
-    def get_dataset():
+    def _has_db() -> bool:
+        p = app.config.get("DB_PATH")
+        return p is not None and Path(p).exists()
+
+    def _get_db() -> Database:
+        p = Path(app.config["DB_PATH"])
+        db = Database(p)
+        db.initialize()
+        return db
+
+    def get_dataset() -> DashboardDataset:
+        if _has_db():
+            db = _get_db()
+            # For the full dataset load, use db-backed
+            records, _ = db.query_events()
+            summary = db.get_summary()
+            db.close()
+            return DashboardDataset(records=records, skipped_lines=0, summary=summary)
+
         dataset = load_dataset(
             records_path=Path(app.config["RECORDS_PATH"]),
             summary_path=Path(app.config["SUMMARY_PATH"]) if app.config["SUMMARY_PATH"] else None,
@@ -62,37 +93,81 @@ def create_app(records_path: Path, summary_path: Path | None = None) -> Flask:
 
     @app.route("/api/summary")
     def api_summary():
+        if _has_db():
+            db = _get_db()
+            summary = db.get_summary()
+            blocklist_count = summary.get("blocklist_count", 0)
+            malicious_count = summary.get("malicious_event_count", 0)
+            top_threats = db.get_top_threats(10)
+            filter_options = db.get_filter_options()
+            db.close()
+
+            top_attack_category = "none"
+            cats = summary.get("by_attack_category", {})
+            if cats:
+                top_attack_category = max(cats.items(), key=lambda x: x[1])[0]
+
+            return jsonify({
+                "total_events": summary["total_events"],
+                "unique_source_ips": summary["unique_source_ips"],
+                "malicious_event_count": malicious_count,
+                "blocklist_count": blocklist_count,
+                "skipped_lines": 0,
+                "top_attack_category": top_attack_category,
+                "by_attack_category": summary.get("by_attack_category", {}),
+                "by_event_type": summary.get("by_event_type", {}),
+                "by_protocol": summary.get("by_protocol", {}),
+            })
+
+        # JSONL fallback
         dataset = get_dataset()
-        summary = dataset.summary
         malicious_records = get_malicious_records(dataset.records)
         blocklist_ips = collect_blocklist_ips(dataset.records)
 
         top_attack_category = "none"
-        category_counts = summary.get("by_attack_category")
+        category_counts = dataset.summary.get("by_attack_category")
         if isinstance(category_counts, dict) and category_counts:
             top_attack_category = max(category_counts.items(), key=lambda item: item[1])[0]
 
         return jsonify({
-            "total_events": summary.get("total_events", 0),
-            "unique_source_ips": summary.get("unique_source_ips", 0),
+            "total_events": dataset.summary.get("total_events", 0),
+            "unique_source_ips": dataset.summary.get("unique_source_ips", 0),
             "malicious_event_count": len(malicious_records),
             "blocklist_count": len(blocklist_ips),
             "skipped_lines": dataset.skipped_lines,
             "top_attack_category": top_attack_category,
-            "by_attack_category": summary.get("by_attack_category", {}),
-            "by_event_type": summary.get("by_event_type", {}),
-            "by_protocol": summary.get("by_protocol", {}),
+            "by_attack_category": dataset.summary.get("by_attack_category", {}),
+            "by_event_type": dataset.summary.get("by_event_type", {}),
+            "by_protocol": dataset.summary.get("by_protocol", {}),
         })
 
     @app.route("/api/events")
     def api_events():
-        dataset = get_dataset()
         source_ip = request.args.get("source_ip", "").strip() or None
         event_type = request.args.get("event_type", "").strip() or None
         attack_category = request.args.get("attack_category", "").strip() or None
         protocol = request.args.get("protocol", "").strip() or None
         malicious_only = request.args.get("malicious_only") == "1"
 
+        if _has_db():
+            db = _get_db()
+            records, total = db.query_events(
+                source_ip=source_ip,
+                event_type=event_type,
+                attack_category=attack_category,
+                protocol=protocol,
+                malicious_only=malicious_only,
+            )
+            filter_options = db.get_filter_options()
+            db.close()
+            return jsonify({
+                "total": len(records),
+                "records": records,
+                "filter_options": filter_options,
+            })
+
+        # JSONL fallback
+        dataset = get_dataset()
         records = filter_records(
             dataset.records,
             source_ip=source_ip,
@@ -114,6 +189,15 @@ def create_app(records_path: Path, summary_path: Path | None = None) -> Flask:
 
     @app.route("/api/events/<int:record_id>")
     def api_event_detail(record_id: int):
+        if _has_db():
+            db = _get_db()
+            record = db.get_event_by_id(record_id)
+            db.close()
+            if record is None:
+                abort(404)
+            return jsonify(record)
+
+        # JSONL fallback
         dataset = get_dataset()
         record = get_record_by_id(dataset.records, record_id)
         if record is None:
@@ -122,6 +206,13 @@ def create_app(records_path: Path, summary_path: Path | None = None) -> Flask:
 
     @app.route("/api/top-threats")
     def api_top_threats():
+        if _has_db():
+            db = _get_db()
+            threats = db.get_top_threats(10)
+            db.close()
+            return jsonify({"threats": threats})
+
+        # JSONL fallback
         dataset = get_dataset()
         ip_counter: Counter[str] = Counter()
         for record in dataset.records:
@@ -135,17 +226,67 @@ def create_app(records_path: Path, summary_path: Path | None = None) -> Flask:
         ]
         return jsonify({"threats": top})
 
+    # ── Attack Session Endpoints (database only) ───────────────────────
+
+    @app.route("/api/sessions")
+    def api_sessions():
+        if not _has_db():
+            return jsonify({"sessions": [], "total": 0, "message": "Database not configured"})
+
+        source_ip = request.args.get("source_ip", "").strip() or None
+        malicious_only = request.args.get("malicious_only") == "1"
+
+        db = _get_db()
+        sessions, total = db.query_attack_sessions(
+            source_ip=source_ip,
+            malicious_only=malicious_only,
+        )
+        db.close()
+        return jsonify({"sessions": sessions, "total": total})
+
+    @app.route("/api/sessions/<session_id>/timeline")
+    def api_session_timeline(session_id: str):
+        if not _has_db():
+            return jsonify({"events": [], "message": "Database not configured"})
+
+        source_ip = request.args.get("source_ip", "").strip()
+        if not source_ip:
+            return jsonify({"error": "source_ip query parameter is required"}), 400
+
+        db = _get_db()
+        events = db.get_session_timeline(session_id, source_ip)
+        db.close()
+        return jsonify({"events": events, "session_id": session_id, "source_ip": source_ip})
+
     # ── Export Endpoints ────────────────────────────────────────────────
 
     def get_filtered_records() -> list[dict[str, Any]]:
+        source_ip = request.args.get("source_ip", "").strip() or None
+        event_type = request.args.get("event_type", "").strip() or None
+        attack_category = request.args.get("attack_category", "").strip() or None
+        protocol = request.args.get("protocol", "").strip() or None
+        malicious_only = request.args.get("malicious_only") == "1"
+
+        if _has_db():
+            db = _get_db()
+            records, _ = db.query_events(
+                source_ip=source_ip,
+                event_type=event_type,
+                attack_category=attack_category,
+                protocol=protocol,
+                malicious_only=malicious_only,
+            )
+            db.close()
+            return records
+
         dataset = get_dataset()
         return filter_records(
             dataset.records,
-            source_ip=request.args.get("source_ip", "").strip() or None,
-            event_type=request.args.get("event_type", "").strip() or None,
-            attack_category=request.args.get("attack_category", "").strip() or None,
-            protocol=request.args.get("protocol", "").strip() or None,
-            malicious_only=request.args.get("malicious_only") == "1",
+            source_ip=source_ip,
+            event_type=event_type,
+            attack_category=attack_category,
+            protocol=protocol,
+            malicious_only=malicious_only,
         )
 
     @app.route("/api/exports/blocklist.txt")
@@ -183,9 +324,16 @@ def create_app(records_path: Path, summary_path: Path | None = None) -> Flask:
     @app.route("/api/exports/report.md")
     def export_report_markdown():
         records = get_filtered_records()
-        dataset = get_dataset()
+        if _has_db():
+            db = _get_db()
+            summary = db.get_summary()
+            db.close()
+        else:
+            dataset = get_dataset()
+            summary = dataset.summary
+
         blocklist_ips = collect_blocklist_ips(records)
-        report = build_markdown_report(records, dataset.summary, blocklist_ips)
+        report = build_markdown_report(records, summary, blocklist_ips)
         return send_file(
             BytesIO(report.encode("utf-8")),
             mimetype="text/markdown; charset=utf-8",
@@ -210,6 +358,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--summary-file",
         type=Path,
         help="Optional path to the JSON summary file generated by the pipeline.",
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        help="Optional SQLite database path. If the file exists, the API reads from it.",
     )
     parser.add_argument(
         "--host",
@@ -238,7 +391,28 @@ def main() -> int:
         args.records_file.parent.mkdir(parents=True, exist_ok=True)
         args.records_file.touch()
 
-    app = create_app(records_path=args.records_file, summary_path=args.summary_file)
+    settings = Settings.from_env()
+
+    # Resolve database path
+    db_path: Path | None = None
+    if args.db:
+        db_path = args.db
+    else:
+        db_url = settings.database_url
+        if db_url and db_url != "data/honeypot.db" or Path(db_url).exists():
+            db_path = Path(db_url)
+
+    # Pre-initialize the database so the file exists
+    if db_path is not None:
+        db = Database(db_path)
+        db.initialize()
+        db.close()
+
+    app = create_app(
+        records_path=args.records_file,
+        summary_path=args.summary_file,
+        db_path=db_path,
+    )
     app.run(host=args.host, port=args.port, debug=args.debug)
     return 0
 

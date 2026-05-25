@@ -17,6 +17,11 @@
   letter-spacing: -0.02em;
 }
 
+.iris-circle {
+  fill: #1a1a1a; /* Muted start */
+  transition: fill 0.6s ease;
+}
+
 .blade-path {
   transition: d 0.6s cubic-bezier(0.4, 0, 0.2, 1), fill 0.4s ease;
 }
@@ -28,18 +33,20 @@
 /* Hover States */
 .sharingan-container:hover .sharingan-svg {
   transform: rotate(360deg);
-  color: var(--accent-red);
-  filter: drop-shadow(0 0 8px var(--accent-red-glow));
+  filter: drop-shadow(0 0 12px var(--accent-red-glow));
+}
+
+.sharingan-container:hover .iris-circle {
+  fill: #dd0000; /* Authentic Red */
 }
 
 .sharingan-container:hover .inner-ring {
   opacity: 0;
 }
 
-/* Morphing the path to Mangekyo */
-/* Standard: M50 20 C60 20 65 30 50 40 C35 30 40 20 50 20 */
-/* Mangekyo: M50 10 C80 10 90 45 50 50 C10 45 20 10 50 10 */
-
+/* Morphing to Itachi's Mangekyo (Scaled to fit iris) */
+/* Standard: M50 22 C55 22 58 25 58 29 C58 33 55 36 51 36 C47 36 45 33 45 29 C45 27 46 24 49 22 C50 21 50 22 50 22 */
+/* Mangekyo: Pulled in to max radius ~40 (Iris is 44) */
 .sharingan-container:hover .blade-path {
-  d: path('M50 10 C80 10 90 45 50 50 C10 45 20 10 50 10');
+  d: path('M50 50 C60 45 82 35 82 22 C82 10 65 10 50 50 C50 50 50 50 50 50 C50 50 50 50 50 50 C50 50 50 50 50 50');
 }

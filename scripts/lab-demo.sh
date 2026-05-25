@@ -7,6 +7,7 @@ COWRIE_LOG="${ROOT_DIR}/data/raw/cowrie/log/cowrie.json"
 RECORDS_FILE="${ROOT_DIR}/exports/cowrie.records.jsonl"
 SUMMARY_FILE="${ROOT_DIR}/reports/generated/cowrie.summary.json"
 REPORT_DIR="${ROOT_DIR}/reports/generated/demo-bundle"
+DB_FILE="${ROOT_DIR}/data/honeypot.db"
 FRONTEND_DIR="${ROOT_DIR}/sharingan-frontend"
 
 usage() {
@@ -21,6 +22,7 @@ Commands:
   api             Run the Flask JSON API backend (port 5000)
   dashboard       Run the Sharingan React frontend (port 5173)
   report          Generate the report bundle from current saved outputs
+  block           Review and apply iptables blocklist rules
   paths           Print the important file paths and attack target
 EOF
 }
@@ -36,6 +38,7 @@ ensure_dirs() {
   mkdir -p \
     "${ROOT_DIR}/data/raw/cowrie/log" \
     "${ROOT_DIR}/data/raw/cowrie/lib" \
+    "${ROOT_DIR}/data" \
     "${ROOT_DIR}/exports" \
     "${ROOT_DIR}/reports/generated"
 }
@@ -83,7 +86,8 @@ case "${1:-}" in
       --poll-interval 1 \
       ${ENRICH_FLAGS} \
       --output-file "${RECORDS_FILE}" \
-      --summary-file "${SUMMARY_FILE}"
+      --summary-file "${SUMMARY_FILE}" \
+      --db "${DB_FILE}"
     ;;
   api)
     require_venv
@@ -97,6 +101,7 @@ case "${1:-}" in
     exec "${ROOT_DIR}/.venv/bin/honeypot-dashboard" \
       --records-file "${RECORDS_FILE}" \
       --summary-file "${SUMMARY_FILE}" \
+      --db "${DB_FILE}" \
       --host 0.0.0.0
     ;;
   dashboard)
@@ -113,12 +118,20 @@ case "${1:-}" in
       --summary-file "${SUMMARY_FILE}" \
       --output-dir "${REPORT_DIR}"
     ;;
+  block)
+    require_venv
+    exec "${ROOT_DIR}/.venv/bin/honeypot-block" \
+      --db "${DB_FILE}" \
+      --records-file "${RECORDS_FILE}" \
+      "${@:2}"
+    ;;
   paths)
     cat <<EOF
 Cowrie SSH target: ssh -p 2222 root@<vm-or-host-ip>
 Cowrie JSON log:   ${COWRIE_LOG}
 Records JSONL:     ${RECORDS_FILE}
 Summary JSON:      ${SUMMARY_FILE}
+SQLite Database:   ${DB_FILE}
 Report bundle:     ${REPORT_DIR}
 API URL:           http://127.0.0.1:5000/api/summary
 Dashboard URL:     http://127.0.0.1:5173/dashboard

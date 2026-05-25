@@ -49,6 +49,27 @@ interface FilterOptions {
   protocols: string[];
 }
 
+interface AttackSession {
+  id: number;
+  session_id: string;
+  source_ip: string;
+  honeypot: string;
+  start_time: string | null;
+  end_time: string | null;
+  event_count: number;
+  attack_categories: string[];
+  severity_counts: Record<string, number>;
+  is_malicious: number;
+  first_seen: string;
+  last_seen: string;
+}
+
+interface SessionTimelineData {
+  events: EventRecord[];
+  session_id: string;
+  source_ip: string;
+}
+
 const REFRESH_INTERVAL = 3000;
 
 const Dashboard: React.FC = () => {
@@ -65,6 +86,15 @@ const Dashboard: React.FC = () => {
   const [filterEventType, setFilterEventType] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterProtocol, setFilterProtocol] = useState('');
+
+  // Sessions
+  const [sessions, setSessions] = useState<AttackSession[]>([]);
+  const [sessionsTotal, setSessionsTotal] = useState(0);
+  const [sessionsMsg, setSessionsMsg] = useState<string | null>(null);
+  const [sessionsMaliciousOnly, setSessionsMaliciousOnly] = useState(false);
+  const [viewingSession, setViewingSession] = useState<AttackSession | null>(null);
+  const [sessionTimeline, setSessionTimeline] = useState<SessionTimelineData | null>(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -100,11 +130,55 @@ const Dashboard: React.FC = () => {
     }
   }, [filterIp, filterEventType, filterCategory, filterProtocol]);
 
+  const fetchSessions = useCallback(async () => {
+    try {
+      const params = new URLSearchParams();
+      if (sessionsMaliciousOnly) params.set('malicious_only', '1');
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const res = await fetch(`/api/sessions${qs}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSessions(data.sessions || []);
+        setSessionsTotal(data.total || 0);
+        setSessionsMsg(data.message || null);
+      }
+    } catch (err) {
+      console.error('Failed to fetch sessions:', err);
+    }
+  }, [sessionsMaliciousOnly]);
+
+  const fetchSessionTimeline = async (session: AttackSession) => {
+    setTimelineLoading(true);
+    setViewingSession(session);
+    try {
+      const res = await fetch(
+        `/api/sessions/${encodeURIComponent(session.session_id)}/timeline?source_ip=${encodeURIComponent(session.source_ip)}`
+      );
+      if (res.ok) {
+        setSessionTimeline(await res.json());
+      }
+    } catch (err) {
+      console.error('Failed to fetch session timeline:', err);
+    }
+    setTimelineLoading(false);
+  };
+
+  const closeTimeline = () => {
+    setViewingSession(null);
+    setSessionTimeline(null);
+  };
+
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, REFRESH_INTERVAL);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  useEffect(() => {
+    if (activeNav === 'sessions') {
+      fetchSessions();
+    }
+  }, [activeNav, fetchSessions]);
 
   const stats = [
     { label: 'Total Events', value: summary?.total_events ?? 0 },
@@ -123,6 +197,16 @@ const Dashboard: React.FC = () => {
     try {
       const d = new Date(ts);
       return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch {
+      return ts;
+    }
+  };
+
+  const formatDateTime = (ts: string | null) => {
+    if (!ts) return '-';
+    try {
+      const d = new Date(ts);
+      return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     } catch {
       return ts;
     }
@@ -158,9 +242,10 @@ const Dashboard: React.FC = () => {
           <SharinganLogo />
         </div>
         <nav className="sidebar-nav">
-          <a href="#" className={activeNav === 'overview' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('overview'); }}>Overview</a>
-          <a href="#" className={activeNav === 'events' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('events'); }}>Events</a>
-          <a href="#" className={activeNav === 'intelligence' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('intelligence'); }}>Intelligence</a>
+          <a href="#" className={activeNav === 'overview' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('overview'); closeTimeline(); }}>Overview</a>
+          <a href="#" className={activeNav === 'events' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('events'); closeTimeline(); }}>Events</a>
+          <a href="#" className={activeNav === 'sessions' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('sessions'); closeTimeline(); }}>Sessions</a>
+          <a href="#" className={activeNav === 'intelligence' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('intelligence'); closeTimeline(); }}>Intelligence</a>
           <a href="/api/exports/blocklist.txt" target="_blank" rel="noopener noreferrer">↓ Blocklist</a>
           <a href="/api/exports/report.md" target="_blank" rel="noopener noreferrer">↓ Report</a>
         </nav>
@@ -172,12 +257,21 @@ const Dashboard: React.FC = () => {
       <main className="dashboard-main">
         <header className="dashboard-header">
           <div className="header-search">
-            <input
-              type="text"
-              placeholder="Filter by source IP..."
-              value={filterIp}
-              onChange={(e) => setFilterIp(e.target.value)}
-            />
+            {activeNav === 'sessions' ? (
+              <input
+                type="text"
+                placeholder="Filter by source IP..."
+                value={filterIp}
+                onChange={(e) => setFilterIp(e.target.value)}
+              />
+            ) : (
+              <input
+                type="text"
+                placeholder="Filter by source IP..."
+                value={filterIp}
+                onChange={(e) => setFilterIp(e.target.value)}
+              />
+            )}
           </div>
           <div className="header-actions">
             <span className="status-indicator">
@@ -188,22 +282,24 @@ const Dashboard: React.FC = () => {
         </header>
 
         <section className="dashboard-content">
-          {/* Stats Row */}
-          <div className="stats-grid">
-            {stats.map((stat, i) => (
-              <div key={i} className="stat-card">
-                <span className="stat-label">{stat.label}</span>
-                <div className="stat-value-group">
-                  <span className={`stat-value ${stat.critical ? 'text-red' : ''}`}>
-                    {stat.value.toLocaleString()}
-                  </span>
+          {/* Stats Row — shown on overview, events, sessions */}
+          {activeNav !== 'intelligence' && !viewingSession && (
+            <div className="stats-grid">
+              {stats.map((stat, i) => (
+                <div key={i} className="stat-card">
+                  <span className="stat-label">{stat.label}</span>
+                  <div className="stat-value-group">
+                    <span className={`stat-value ${stat.critical ? 'text-red' : ''}`}>
+                      {stat.value.toLocaleString()}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
-          {/* Filters Bar (visible in events view) */}
-          {activeNav === 'events' && (
+          {/* Filters Bar (events view) */}
+          {activeNav === 'events' && !viewingSession && (
             <div className="filters-bar">
               <select value={filterEventType} onChange={(e) => setFilterEventType(e.target.value)}>
                 <option value="">All Event Types</option>
@@ -221,132 +317,289 @@ const Dashboard: React.FC = () => {
             </div>
           )}
 
-          {/* Main Content Grid */}
-          <div className="content-grid">
-            <div className="event-log-panel">
+          {/* Sessions Filters */}
+          {activeNav === 'sessions' && !viewingSession && (
+            <div className="filters-bar">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={sessionsMaliciousOnly}
+                  onChange={(e) => setSessionsMaliciousOnly(e.target.checked)}
+                />
+                <span>Malicious only</span>
+              </label>
+              <span className="sessions-count">
+                {sessionsTotal} session{sessionsTotal !== 1 ? 's' : ''}
+              </span>
+            </div>
+          )}
+
+          {/* ── Session Timeline View ─────────────────────────────── */}
+          {viewingSession && sessionTimeline && (
+            <div className="timeline-panel">
               <div className="panel-header">
-                <h3>{activeNav === 'events' ? 'Event Log' : 'Live Event Stream'}</h3>
-                {activeNav !== 'events' && (
-                  <button className="view-all" onClick={() => setActiveNav('events')}>View All</button>
-                )}
+                <div>
+                  <h3>
+                    Attack Timeline
+                    <span className="timeline-badge">
+                      {viewingSession.source_ip} / {viewingSession.session_id}
+                    </span>
+                  </h3>
+                  <p className="text-muted" style={{ marginTop: 4, fontSize: '0.85rem' }}>
+                    {formatDateTime(viewingSession.start_time)} → {formatDateTime(viewingSession.end_time)} · {viewingSession.event_count} events
+                  </p>
+                </div>
+                <button className="reset-btn" onClick={closeTimeline}>← Back to Sessions</button>
               </div>
-              <table className="event-table">
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Event Type</th>
-                    <th>Source IP</th>
-                    <th>Category</th>
-                    <th>Severity</th>
-                    <th>Detail</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(activeNav === 'events' ? events : events.slice(0, 8)).map(event => (
-                    <tr key={event._record_id}>
-                      <td className="text-muted">{formatTime(event.timestamp)}</td>
-                      <td><span className="code-text">{event.event_type}</span></td>
-                      <td>{event.source_ip || '-'}</td>
-                      <td>{event.classification?.attack_category || '-'}</td>
-                      <td>
-                        <span className={`severity-pill ${severityClass(event.classification?.severity)}`}>
-                          {event.classification?.severity || 'unknown'}
-                        </span>
-                      </td>
-                      <td>
-                        <Link to={`/dashboard/events/${event._record_id}`} className="detail-link">
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                  {events.length === 0 && (
+
+              {timelineLoading ? (
+                <div className="loading-state" style={{ padding: 40 }}>
+                  <div className="loading-spinner"></div>
+                </div>
+              ) : (
+                <table className="event-table">
+                  <thead>
                     <tr>
-                      <td colSpan={6} className="empty-state">
-                        No events yet. Attack the honeypot to generate data.
-                      </td>
+                      <th>Time</th>
+                      <th>Event Type</th>
+                      <th>Category</th>
+                      <th>Severity</th>
+                      <th>Detail</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-              {activeNav === 'events' && (
-                <div className="event-count">Showing {events.length} events</div>
+                  </thead>
+                  <tbody>
+                    {sessionTimeline.events.map(event => (
+                      <tr key={event._record_id || event.timestamp}>
+                        <td className="text-muted">{formatTime(event.timestamp)}</td>
+                        <td><span className="code-text">{event.event_type}</span></td>
+                        <td>{event.classification?.attack_category || '-'}</td>
+                        <td>
+                          <span className={`severity-pill ${severityClass(event.classification?.severity)}`}>
+                            {event.classification?.severity || 'unknown'}
+                          </span>
+                        </td>
+                        <td>
+                          <Link to={`/dashboard/events/${event._record_id}`} className="detail-link">
+                            View
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
-            
-            {activeNav !== 'events' && (
-              <div className="side-panel">
-                <div className="panel-header">
-                  <h3>Top Threats</h3>
+          )}
+
+          {/* ── Sessions List ─────────────────────────────────────── */}
+          {activeNav === 'sessions' && !viewingSession && (
+            <div className="event-log-panel" style={{ gridColumn: '1 / -1' }}>
+              <div className="panel-header">
+                <h3>Attack Sessions</h3>
+              </div>
+
+              {sessionsMsg ? (
+                <div className="empty-state">
+                  <p>{sessionsMsg}</p>
+                  <p style={{ marginTop: 8, fontSize: '0.85rem' }}>
+                    Run the pipeline with <code className="code-text">--db data/honeypot.db</code> to enable session tracking.
+                  </p>
                 </div>
-                <div className="threat-list">
-                  {threats.map((threat, i) => (
-                    <div key={i} className="threat-item">
-                      <span className="threat-ip">{threat.ip}</span>
-                      <span className="threat-count">{threat.count} events</span>
-                    </div>
-                  ))}
-                  {threats.length === 0 && (
-                    <div className="threat-item empty">
-                      <span className="text-muted">No threats detected yet</span>
-                    </div>
+              ) : sessions.length === 0 ? (
+                <div className="empty-state">
+                  <p>No attack sessions recorded yet.</p>
+                  <p style={{ marginTop: 8, fontSize: '0.85rem' }}>
+                    Attack the honeypot to generate session data, or run the pipeline with the database enabled.
+                  </p>
+                </div>
+              ) : (
+                <table className="event-table">
+                  <thead>
+                    <tr>
+                      <th>Session ID</th>
+                      <th>Source IP</th>
+                      <th>Events</th>
+                      <th>Categories</th>
+                      <th>Severity</th>
+                      <th>Time</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sessions.map(session => (
+                      <tr key={session.id}
+                          className={session.is_malicious ? 'row-malicious' : ''}
+                          style={session.is_malicious ? { background: 'rgba(225, 29, 72, 0.05)' } : undefined}>
+                        <td><span className="code-text">{session.session_id.substring(0, 12)}...</span></td>
+                        <td>
+                          <strong>{session.source_ip}</strong>
+                          {session.is_malicious === 1 && (
+                            <span className="severity-pill high" style={{ marginLeft: 8, fontSize: '0.65rem' }}>MAL</span>
+                          )}
+                        </td>
+                        <td>{session.event_count}</td>
+                        <td>
+                          <div className="category-pills">
+                            {session.attack_categories.map((cat: string) => (
+                              <span key={cat} className="cat-pill">{cat.replace(/_/g, ' ')}</span>
+                            ))}
+                          </div>
+                        </td>
+                        <td>
+                          {Object.entries(session.severity_counts).map(([sev, count]) => (
+                            <span key={sev} className={`severity-pill ${severityClass(sev)}`} style={{ marginRight: 4 }}>
+                              {sev}:{count}
+                            </span>
+                          ))}
+                        </td>
+                        <td className="text-muted" style={{ fontSize: '0.8rem' }}>
+                          {formatDateTime(session.start_time)}
+                        </td>
+                        <td>
+                          <button
+                            className="detail-link"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}
+                            onClick={() => fetchSessionTimeline(session)}
+                          >
+                            Timeline →
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
+          {/* ── Overview / Events / Intelligence (existing views) ──── */}
+          {activeNav !== 'sessions' && !viewingSession && (
+            <div className="content-grid">
+              <div className="event-log-panel">
+                <div className="panel-header">
+                  <h3>{activeNav === 'events' ? 'Event Log' : 'Live Event Stream'}</h3>
+                  {activeNav !== 'events' && (
+                    <button className="view-all" onClick={() => setActiveNav('events')}>View All</button>
                   )}
                 </div>
-
-                {/* Attack Category Breakdown */}
-                {summary?.by_attack_category && Object.keys(summary.by_attack_category).length > 0 && (
-                  <>
-                    <div className="panel-header" style={{ marginTop: '24px' }}>
-                      <h3>Attack Categories</h3>
-                    </div>
-                    <div className="threat-list">
-                      {Object.entries(summary.by_attack_category).map(([cat, count]) => (
-                        <div key={cat} className="threat-item">
-                          <span className="threat-ip">{cat}</span>
-                          <span className="threat-count">{count}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
+                <table className="event-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Event Type</th>
+                      <th>Source IP</th>
+                      <th>Category</th>
+                      <th>Severity</th>
+                      <th>Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(activeNav === 'events' ? events : events.slice(0, 8)).map(event => (
+                      <tr key={event._record_id}>
+                        <td className="text-muted">{formatTime(event.timestamp)}</td>
+                        <td><span className="code-text">{event.event_type}</span></td>
+                        <td>{event.source_ip || '-'}</td>
+                        <td>{event.classification?.attack_category || '-'}</td>
+                        <td>
+                          <span className={`severity-pill ${severityClass(event.classification?.severity)}`}>
+                            {event.classification?.severity || 'unknown'}
+                          </span>
+                        </td>
+                        <td>
+                          <Link to={`/dashboard/events/${event._record_id}`} className="detail-link">
+                            View
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                    {events.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="empty-state">
+                          No events yet. Attack the honeypot to generate data.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                {activeNav === 'events' && (
+                  <div className="event-count">Showing {events.length} events</div>
                 )}
-
-                {/* Protocol Breakdown */}
-                {summary?.by_protocol && Object.keys(summary.by_protocol).length > 0 && (
-                  <>
-                    <div className="panel-header" style={{ marginTop: '24px' }}>
-                      <h3>Protocols</h3>
-                    </div>
-                    <div className="threat-list">
-                      {Object.entries(summary.by_protocol).map(([proto, count]) => (
-                        <div key={proto} className="threat-item">
-                          <span className="threat-ip">{proto}</span>
-                          <span className="threat-count">{count}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-
-                {/* Export Buttons */}
-                <div className="export-section">
+              </div>
+              
+              {activeNav !== 'events' && (
+                <div className="side-panel">
                   <div className="panel-header">
-                    <h3>Exports</h3>
+                    <h3>Top Threats</h3>
                   </div>
-                  <div className="export-buttons">
-                    <a href="/api/exports/blocklist.txt" className="export-btn" target="_blank" rel="noopener noreferrer">
-                      ⬇ Blocklist
-                    </a>
-                    <a href="/api/exports/malicious.json" className="export-btn" target="_blank" rel="noopener noreferrer">
-                      ⬇ Malicious JSON
-                    </a>
-                    <a href="/api/exports/report.md" className="export-btn" target="_blank" rel="noopener noreferrer">
-                      ⬇ Report
-                    </a>
+                  <div className="threat-list">
+                    {threats.map((threat, i) => (
+                      <div key={i} className="threat-item">
+                        <span className="threat-ip">{threat.ip}</span>
+                        <span className="threat-count">{threat.count} events</span>
+                      </div>
+                    ))}
+                    {threats.length === 0 && (
+                      <div className="threat-item empty">
+                        <span className="text-muted">No threats detected yet</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Attack Category Breakdown */}
+                  {summary?.by_attack_category && Object.keys(summary.by_attack_category).length > 0 && (
+                    <>
+                      <div className="panel-header" style={{ marginTop: '24px' }}>
+                        <h3>Attack Categories</h3>
+                      </div>
+                      <div className="threat-list">
+                        {Object.entries(summary.by_attack_category).map(([cat, count]) => (
+                          <div key={cat} className="threat-item">
+                            <span className="threat-ip">{cat}</span>
+                            <span className="threat-count">{count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Protocol Breakdown */}
+                  {summary?.by_protocol && Object.keys(summary.by_protocol).length > 0 && (
+                    <>
+                      <div className="panel-header" style={{ marginTop: '24px' }}>
+                        <h3>Protocols</h3>
+                      </div>
+                      <div className="threat-list">
+                        {Object.entries(summary.by_protocol).map(([proto, count]) => (
+                          <div key={proto} className="threat-item">
+                            <span className="threat-ip">{proto}</span>
+                            <span className="threat-count">{count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Export Buttons */}
+                  <div className="export-section">
+                    <div className="panel-header">
+                      <h3>Exports</h3>
+                    </div>
+                    <div className="export-buttons">
+                      <a href="/api/exports/blocklist.txt" className="export-btn" target="_blank" rel="noopener noreferrer">
+                        ⬇ Blocklist
+                      </a>
+                      <a href="/api/exports/malicious.json" className="export-btn" target="_blank" rel="noopener noreferrer">
+                        ⬇ Malicious JSON
+                      </a>
+                      <a href="/api/exports/report.md" className="export-btn" target="_blank" rel="noopener noreferrer">
+                        ⬇ Report
+                      </a>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </section>
       </main>
     </div>

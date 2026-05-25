@@ -101,11 +101,34 @@ Show the professor:
 4. the dashboard updates with new events
 5. the detail page shows indicators, classification, and threat-intel fields
 6. the project can export a blocklist and markdown report
+7. the automated firewall response blocks malicious IPs via iptables
 
 Generate the report bundle:
 
 ```bash
 scripts/lab-demo.sh report
+```
+
+## Automated Blocking Demo
+
+After the pipeline has processed some malicious events:
+
+```bash
+# 1. Review what would be blocked (dry-run — safe, no root)
+scripts/apply-blocklist.sh review
+
+# 2. Generate a standalone shell script for inspection
+scripts/apply-blocklist.sh script
+cat reports/generated/blocklist.sh
+
+# 3. Apply the blocklist (requires root)
+sudo scripts/apply-blocklist.sh apply
+
+# 4. Verify the rules are active
+sudo iptables -L INPUT -n | grep honeypot-block
+
+# 5. Remove blocks when done
+sudo scripts/apply-blocklist.sh unblock
 ```
 
 ## Notes

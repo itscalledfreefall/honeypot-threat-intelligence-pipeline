@@ -480,3 +480,74 @@
     width: 200px;
   }
 }
+
+/* ── Sessions View ─────────────────────────────────────────────────── */
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  accent-color: var(--accent-red);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.sessions-count {
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Timeline Panel */
+.timeline-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 24px;
+  grid-column: 1 / -1;
+}
+
+.timeline-badge {
+  display: inline-block;
+  margin-left: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--accent-red);
+  background: rgba(225, 29, 72, 0.1);
+  padding: 3px 10px;
+  border-radius: 99px;
+  vertical-align: middle;
+}
+
+/* Category Pills */
+.category-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cat-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+/* Malicious row highlight */
+.row-malicious:hover td {
+  background: rgba(225, 29, 72, 0.08) !important;
+}

@@ -43,12 +43,18 @@ This is the right first step because all later features depend on trustworthy ev
   Extracts indicators such as IP addresses, usernames, passwords, commands, and URLs.
 - `src/honeypot_pipeline/classification.py`
   Assigns a simple attack category and severity to each event.
+- `src/honeypot_pipeline/enrichment.py`
+  Queries AbuseIPDB and VirusTotal for threat intelligence on attacker IPs.
+- `src/honeypot_pipeline/database.py`
+  Persistent SQLite storage with deduplication, attack sessions, and threat intel.
+- `src/honeypot_pipeline/response.py`
+  Automated iptables firewall blocking from pipeline threat intelligence.
 - `src/honeypot_pipeline/cli.py`
-  Small command-line entry point for normalizing a Cowrie log file and exporting results.
+  Command-line entry point for normalizing Cowrie logs and running enrichment.
 - `src/honeypot_pipeline/dashboard.py`
   Runs a read-only web dashboard over processed event records and summaries.
 - `tests/`
-  Automated tests for the parser, classification, enrichment, and output helpers.
+  Automated tests for parsers, classification, enrichment, database, response, and API.
 
 ## Why Cowrie First
 
@@ -80,9 +86,11 @@ Storage and visualization:
 
 Automated response:
 
-- firewall blocklist generation
-- safe review workflow before blocking
-- optional automatic enforcement in a lab environment
+- firewall blocklist generation ✓
+- safe review workflow before blocking ✓
+- optional automatic enforcement in a lab environment ✓
+- persistent SQLite storage with deduplication ✓
+- attack session tracking and timeline ✓
 
 ## Quick Start
 
@@ -113,30 +121,59 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 3. Do not expose a real production system while testing.
 4. Keep API keys in environment variables, not in source control.
 
-## What We Will Build Next
+## Current Features
 
-The next coding step after this scaffold is API enrichment:
+The pipeline currently supports:
 
-1. take a normalized event
-2. extract the attacker IP
-3. query a threat-intelligence provider
-4. attach the result to the event
-5. save the enriched output
+1. Cowrie JSON log normalization with structured event schema
+2. rule-based attack categorization (brute force, malware download, recon, persistence, command execution)
+3. IOC extraction (IPs, usernames, passwords, commands, URLs)
+4. dual threat-intelligence enrichment (AbuseIPDB + VirusTotal) with confidence scoring
+5. persistent SQLite storage with 60-second deduplication window
+6. attack session tracking with timeline views
+7. read-only Flask JSON API backend
+8. React dashboard with Overview, Events, Sessions, and Timeline tabs
+9. exportable blocklists, malicious record exports, and markdown reports
+10. automated iptables firewall blocking with dry-run safety and shell script generation
+11. Docker-based Cowrie lab environment with a helper script for live demos
 
-The pipeline now also supports:
+## Automated Firewall Response
 
-1. rule-based attack categorization
-2. writing processed events to a JSONL output file
-3. writing a batch summary JSON document
+After the pipeline identifies malicious IPs, you can apply iptables
+blocking rules.  All operations default to **dry-run** for safety.
 
-The project now also includes:
+```bash
+# Review what would be blocked (safe, no root needed)
+scripts/apply-blocklist.sh review
 
-1. a local Flask dashboard for browsing processed honeypot events
-2. event filtering by IP, event type, attack category, and protocol
-3. detail views for enrichment and raw event inspection
-4. optional auto-refresh for a live demo while new records are appended
-5. safe action outputs like downloadable blocklists and markdown reports
-6. a Docker-based Cowrie lab path and helper script for live demos
+# Generate a standalone shell script for manual review
+scripts/apply-blocklist.sh script
+
+# Apply the blocklist (requires root)
+sudo scripts/apply-blocklist.sh apply
+
+# List currently blocked IPs
+scripts/apply-blocklist.sh list
+
+# Remove previously applied blocks
+sudo scripts/apply-blocklist.sh unblock
+```
+
+Or use the CLI directly:
+
+```bash
+# Dry-run (default)
+honeypot-block --db data/honeypot.db
+
+# Apply
+sudo honeypot-block --db data/honeypot.db --apply
+
+# Generate a standalone shell script
+honeypot-block --db data/honeypot.db --generate-script reports/generated/blocklist.sh
+
+# Block specific IPs directly
+sudo honeypot-block --ip 10.0.0.99 --ip 192.168.1.100 --apply
+```
 
 ## Environment Variables
 
