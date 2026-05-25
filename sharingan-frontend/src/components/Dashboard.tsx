@@ -13,6 +13,7 @@ interface SummaryData {
 }
 
 interface EventRecord {
+  id?: number;
   _record_id: number;
   timestamp: string | null;
   event_type: string;
@@ -379,7 +380,7 @@ const Dashboard: React.FC = () => {
                           </span>
                         </td>
                         <td>
-                          <Link to={`/dashboard/events/${event._record_id}`} className="detail-link">
+                          <Link to={`/dashboard/events/${event.id ?? event._record_id}`} className="detail-link">
                             View
                           </Link>
                         </td>
@@ -506,7 +507,7 @@ const Dashboard: React.FC = () => {
                           </span>
                         </td>
                         <td>
-                          <Link to={`/dashboard/events/${event._record_id}`} className="detail-link">
+                          <Link to={`/dashboard/events/${event.id ?? event._record_id}`} className="detail-link">
                             View
                           </Link>
                         </td>

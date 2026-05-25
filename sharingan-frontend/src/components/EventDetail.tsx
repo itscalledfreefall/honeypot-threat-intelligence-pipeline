@@ -4,6 +4,7 @@ import SharinganLogo from './SharinganLogo';
 import './EventDetail.css';
 
 interface EventRecord {
+  id?: number;
   _record_id: number;
   timestamp: string | null;
   event_type: string;
@@ -114,7 +115,7 @@ const EventDetail: React.FC = () => {
         <section className="detail-hero">
           <div className="detail-hero-top">
             <Link to="/dashboard" className="back-link">← Back</Link>
-            <span className="detail-id">Event #{event._record_id}</span>
+            <span className="detail-id">Event #{event.id ?? event._record_id}</span>
           </div>
           <h1 className="detail-title">{event.event_type}</h1>
           <div className="detail-pills">
