@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+**/dist/*.egg-info/
+.eggs/
+
+# Node
+node_modules/
+.npm/
+
+# Git
+.git/
+.gitignore
+
+# Generated / data
+data/
+exports/
+reports/generated/
+*.db
+*.sqlite
+
+# Secrets
+.env
+*.pem
+*.key
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+.zed/
+
+# CI / plans / hermes
+.hermes/

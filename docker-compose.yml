@@ -1,0 +1,58 @@
+services:
+  # ── Cowrie SSH/Telnet Honeypot ─────────────────────────────────
+  cowrie:
+    image: cowrie/cowrie:latest
+    container_name: honeypot-cowrie
+    restart: unless-stopped
+    ports:
+      - "2222:2222"
+    environment:
+      COWRIE_TELNET_ENABLED: "no"
+    volumes:
+      - cowrie-logs:/cowrie/cowrie-git/var/log/cowrie
+      - cowrie-lib:/cowrie/cowrie-git/var/lib/cowrie
+      - ./docker/cowrie/etc/userdb.txt:/cowrie/cowrie-git/etc/userdb.txt:ro
+
+  # ── Backend: Flask API + Pipeline CLI ──────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: honeypot-backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=/data/honeypot.db
+      - COWRIE_LOG=/logs/cowrie.json
+      - DB_PATH=/data/honeypot.db
+    volumes:
+      - cowrie-logs:/logs:ro        # read Cowrie logs
+      - pipeline-data:/data          # SQLite DB
+      - pipeline-exports:/exports    # JSONL output
+      - pipeline-reports:/reports    # summaries
+    depends_on:
+      cowrie:
+        condition: service_started
+
+  # ── Frontend: nginx + React ────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    container_name: honeypot-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  cowrie-logs:
+  cowrie-lib:
+  pipeline-data:
+  pipeline-exports:
+  pipeline-reports:
