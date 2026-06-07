@@ -134,6 +134,7 @@ const Dashboard: React.FC = () => {
   const fetchSessions = useCallback(async () => {
     try {
       const params = new URLSearchParams();
+      if (filterIp) params.set('source_ip', filterIp);
       if (sessionsMaliciousOnly) params.set('malicious_only', '1');
       const qs = params.toString() ? `?${params.toString()}` : '';
       const res = await fetch(`/api/sessions${qs}`);
@@ -146,7 +147,7 @@ const Dashboard: React.FC = () => {
     } catch (err) {
       console.error('Failed to fetch sessions:', err);
     }
-  }, [sessionsMaliciousOnly]);
+  }, [filterIp, sessionsMaliciousOnly]);
 
   const fetchSessionTimeline = async (session: AttackSession) => {
     setTimelineLoading(true);
