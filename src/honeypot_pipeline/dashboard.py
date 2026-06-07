@@ -161,7 +161,7 @@ def create_app(
             filter_options = db.get_filter_options()
             db.close()
             return jsonify({
-                "total": len(records),
+                "total": total,
                 "records": records,
                 "filter_options": filter_options,
             })
