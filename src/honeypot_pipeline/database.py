@@ -237,8 +237,8 @@ class Database:
         params: list[Any] = []
 
         if source_ip:
-            where.append("e.source_ip = ?")
-            params.append(source_ip)
+            where.append("e.source_ip LIKE ?")
+            params.append(f"{source_ip}%")
         if event_type:
             where.append("e.event_type = ?")
             params.append(event_type)
@@ -461,8 +461,8 @@ class Database:
         params: list[Any] = []
 
         if source_ip:
-            where.append("source_ip = ?")
-            params.append(source_ip)
+            where.append("source_ip LIKE ?")
+            params.append(f"{source_ip}%")
         if malicious_only:
             where.append("is_malicious = 1")
 
