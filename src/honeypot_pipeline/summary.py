@@ -11,6 +11,7 @@ class PipelineSummary:
         self._attack_categories: Counter[str] = Counter()
         self._protocols: Counter[str] = Counter()
         self._event_types: Counter[str] = Counter()
+        self._risk_levels: Counter[str] = Counter()
 
     def add_record(self, record: Mapping[str, Any]) -> None:
         self.total_events += 1
@@ -33,6 +34,12 @@ class PipelineSummary:
         if isinstance(event_type, str) and event_type:
             self._event_types[event_type] += 1
 
+        risk = record.get("risk")
+        if isinstance(risk, Mapping):
+            level = risk.get("level")
+            if isinstance(level, str) and level:
+                self._risk_levels[level] += 1
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "total_events": self.total_events,
@@ -40,4 +47,5 @@ class PipelineSummary:
             "by_attack_category": dict(sorted(self._attack_categories.items())),
             "by_event_type": dict(sorted(self._event_types.items())),
             "by_protocol": dict(sorted(self._protocols.items())),
+            "by_risk_level": dict(sorted(self._risk_levels.items())),
         }

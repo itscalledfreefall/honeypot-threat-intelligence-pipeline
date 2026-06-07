@@ -53,6 +53,7 @@ class ClassificationTests(unittest.TestCase):
 
         self.assertEqual(record["indicators"]["ip_addresses"], ["198.51.100.24"])
         self.assertEqual(record["classification"]["attack_category"], "reconnaissance")
+        self.assertEqual(record["risk"]["level"], "low")
 
 
 if __name__ == "__main__":

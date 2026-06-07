@@ -117,6 +117,7 @@ def create_app(
                 "by_attack_category": summary.get("by_attack_category", {}),
                 "by_event_type": summary.get("by_event_type", {}),
                 "by_protocol": summary.get("by_protocol", {}),
+                "by_risk_level": summary.get("by_risk_level", {}),
             })
 
         # JSONL fallback
@@ -139,6 +140,7 @@ def create_app(
             "by_attack_category": dataset.summary.get("by_attack_category", {}),
             "by_event_type": dataset.summary.get("by_event_type", {}),
             "by_protocol": dataset.summary.get("by_protocol", {}),
+            "by_risk_level": dataset.summary.get("by_risk_level", {}),
         })
 
     @app.route("/api/events")

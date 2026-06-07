@@ -50,9 +50,24 @@ def build_markdown_report(
         f"- Malicious events: {len(malicious_records)}",
         f"- Blocklist candidates: {len(blocklist_ips)}",
         "",
-        "## Attack Categories",
+        "## Risk Levels",
         "",
     ]
+
+    risk_levels = summary.get("by_risk_level", {})
+    if isinstance(risk_levels, dict) and risk_levels:
+        for key, value in risk_levels.items():
+            lines.append(f"- {key}: {value}")
+    else:
+        lines.append("- none")
+
+    lines.extend(
+        [
+            "",
+            "## Attack Categories",
+            "",
+        ]
+    )
 
     categories = summary.get("by_attack_category", {})
     if isinstance(categories, dict) and categories:
@@ -85,9 +100,10 @@ def build_markdown_report(
 
     if malicious_records:
         for record in malicious_records[:10]:
+            risk = record.get("risk") if isinstance(record.get("risk"), dict) else {}
             lines.append(
                 f"- `{record.get('timestamp', '-')}` `{record.get('source_ip', '-')}` "
-                f"`{record.get('event_type', '-')}`"
+                f"`{record.get('event_type', '-')}` risk `{risk.get('level', 'unknown')}`"
             )
     else:
         lines.append("- none")

@@ -56,6 +56,13 @@ This is the right first step because all later features depend on trustworthy ev
 - `tests/`
   Automated tests for parsers, classification, enrichment, database, response, and API.
 
+More detailed design notes are available in:
+
+- `docs/architecture.md`
+  End-to-end component model, data flow, deployment shape, and extension points.
+- `docs/safety-model.md`
+  Lab safety assumptions, trust boundaries, response safety, and known limitations.
+
 ## Why Cowrie First
 
 Cowrie is a widely used SSH/Telnet honeypot. It produces structured JSON logs and matches the project brief directly. Starting here keeps the first implementation simple and relevant.

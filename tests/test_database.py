@@ -55,6 +55,7 @@ class DatabaseEventTests(unittest.TestCase):
         self.assertEqual(r["source_ip"], "203.0.113.10")
         self.assertEqual(r["event_type"], "cowrie.login.failed")
         self.assertEqual(r["classification"]["attack_category"], "brute_force")
+        self.assertIn("risk", r)
 
     def test_dedup_skips_duplicate_within_window(self) -> None:
         rec = self._make_record()
@@ -161,6 +162,8 @@ class DatabaseEventTests(unittest.TestCase):
         self.assertEqual(s["source_ip"], "10.0.0.1")
         self.assertEqual(s["event_count"], 1)
         self.assertIn("brute_force", s["attack_categories"])
+        self.assertGreater(s["risk_score"], 0)
+        self.assertIn("category:brute_force", s["risk_reasons"])
 
     def test_upsert_attack_session_updates_existing(self) -> None:
         rec1 = self._make_record(session_id="sess1", source_ip="10.0.0.1")

@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from .risk import score_session_snapshot
+
 DDL_STATEMENTS = [
     # ── Events ──────────────────────────────────────────────────────────
     """
@@ -36,6 +38,9 @@ DDL_STATEMENTS = [
         severity        TEXT,
         classification_reason TEXT,
         is_malicious    INTEGER DEFAULT 0,
+        risk_score      INTEGER DEFAULT 0,
+        risk_level      TEXT    DEFAULT 'minimal',
+        risk_reasons    TEXT    DEFAULT '[]',
         created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     )
     """,
@@ -45,6 +50,7 @@ DDL_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_events_session_id       ON events(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_events_attack_category  ON events(attack_category)",
     "CREATE INDEX IF NOT EXISTS idx_events_is_malicious     ON events(is_malicious)",
+    "CREATE INDEX IF NOT EXISTS idx_events_risk_level       ON events(risk_level)",
     "CREATE INDEX IF NOT EXISTS idx_events_honeypot         ON events(honeypot)",
     "CREATE INDEX IF NOT EXISTS idx_events_protocol         ON events(protocol)",
     "CREATE INDEX IF NOT EXISTS idx_events_created_at       ON events(created_at)",
@@ -85,6 +91,9 @@ DDL_STATEMENTS = [
         attack_categories TEXT    DEFAULT '[]',  -- JSON array
         severity_counts   TEXT    DEFAULT '{}',  -- JSON object {high:N, medium:N, low:N}
         is_malicious      INTEGER DEFAULT 0,
+        risk_score        INTEGER DEFAULT 0,
+        risk_level        TEXT    DEFAULT 'minimal',
+        risk_reasons      TEXT    DEFAULT '[]',
         first_seen        TEXT    NOT NULL DEFAULT (datetime('now')),
         last_seen         TEXT    NOT NULL DEFAULT (datetime('now')),
         UNIQUE(session_id, source_ip)
@@ -93,8 +102,22 @@ DDL_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_attack_sessions_source_ip    ON attack_sessions(source_ip)",
     "CREATE INDEX IF NOT EXISTS idx_attack_sessions_session_id   ON attack_sessions(session_id)",
     "CREATE INDEX IF NOT EXISTS idx_attack_sessions_is_malicious ON attack_sessions(is_malicious)",
+    "CREATE INDEX IF NOT EXISTS idx_attack_sessions_risk_level   ON attack_sessions(risk_level)",
     "CREATE INDEX IF NOT EXISTS idx_attack_sessions_last_seen    ON attack_sessions(last_seen)",
 ]
+
+SCHEMA_COLUMNS = {
+    "events": {
+        "risk_score": "INTEGER DEFAULT 0",
+        "risk_level": "TEXT DEFAULT 'minimal'",
+        "risk_reasons": "TEXT DEFAULT '[]'",
+    },
+    "attack_sessions": {
+        "risk_score": "INTEGER DEFAULT 0",
+        "risk_level": "TEXT DEFAULT 'minimal'",
+        "risk_reasons": "TEXT DEFAULT '[]'",
+    },
+}
 
 DEDUP_WINDOW_SECONDS = 60
 
@@ -130,7 +153,22 @@ class Database:
         with self.connection() as conn:
             for stmt in DDL_STATEMENTS:
                 conn.execute(stmt)
+            self._ensure_columns(conn)
             conn.commit()
+
+    def _ensure_columns(self, conn: sqlite3.Connection) -> None:
+        """Add columns introduced after the initial schema.
+
+        This keeps demo servers usable when an existing SQLite volume is reused.
+        """
+        for table, columns in SCHEMA_COLUMNS.items():
+            existing = {
+                row["name"]
+                for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            for column, definition in columns.items():
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def close(self) -> None:
         if self._conn is not None:
@@ -159,6 +197,7 @@ class Database:
         classification = record.get("classification") or {}
         threat_intel = record.get("threat_intel") or {}
         score = threat_intel.get("score") or {}
+        risk = record.get("risk") or {}
 
         with self.connection() as conn:
             # -- dedup check -------------------------------------------------
@@ -188,13 +227,13 @@ class Database:
                     source_ip, source_port, destination_ip, destination_port,
                     protocol, session_id, username, password, command, url,
                     raw_event, attack_category, severity, classification_reason,
-                    is_malicious
+                    is_malicious, risk_score, risk_level, risk_reasons
                 ) VALUES (
                     :timestamp, :event_type, :honeypot,
                     :source_ip, :source_port, :destination_ip, :destination_port,
                     :protocol, :session_id, :username, :password, :command, :url,
                     :raw_event, :attack_category, :severity, :classification_reason,
-                    :is_malicious
+                    :is_malicious, :risk_score, :risk_level, :risk_reasons
                 )
                 """,
                 {
@@ -216,6 +255,9 @@ class Database:
                     "severity": classification.get("severity") or None,
                     "classification_reason": classification.get("reason") or None,
                     "is_malicious": 1 if score.get("is_malicious") else 0,
+                    "risk_score": int(risk.get("score") or 0),
+                    "risk_level": risk.get("level") or "minimal",
+                    "risk_reasons": json.dumps(risk.get("reasons") or [], ensure_ascii=True),
                 },
             )
             conn.commit()
@@ -396,6 +438,12 @@ class Database:
 
                 new_count = existing["event_count"] + 1
                 new_is_malicious = 1 if (existing["is_malicious"] or is_malicious) else 0
+                risk = score_session_snapshot(
+                    event_count=new_count,
+                    attack_categories=cats,
+                    severity_counts=sev,
+                    is_malicious=bool(new_is_malicious),
+                )
 
                 # Keep earliest start_time
                 start_time = existing["start_time"]
@@ -411,6 +459,9 @@ class Database:
                            attack_categories = ?,
                            severity_counts   = ?,
                            is_malicious      = ?,
+                           risk_score        = ?,
+                           risk_level        = ?,
+                           risk_reasons      = ?,
                            start_time        = ?,
                            end_time          = ?,
                            last_seen         = datetime('now')
@@ -421,20 +472,29 @@ class Database:
                         json.dumps(cats, ensure_ascii=True),
                         json.dumps(sev, ensure_ascii=True),
                         new_is_malicious,
+                        risk["score"],
+                        risk["level"],
+                        json.dumps(risk["reasons"], ensure_ascii=True),
                         start_time,
                         timestamp,
                         existing["id"],
                     ),
                 )
             else:
+                risk = score_session_snapshot(
+                    event_count=1,
+                    attack_categories=[category],
+                    severity_counts={severity: 1},
+                    is_malicious=bool(is_malicious),
+                )
                 conn.execute(
                     """
                     INSERT INTO attack_sessions (
                         session_id, source_ip, honeypot,
                         start_time, end_time, event_count,
                         attack_categories, severity_counts,
-                        is_malicious
-                    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+                        is_malicious, risk_score, risk_level, risk_reasons
+                    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session_id,
@@ -445,6 +505,9 @@ class Database:
                         json.dumps([category], ensure_ascii=True),
                         json.dumps({severity: 1}, ensure_ascii=True),
                         is_malicious,
+                        risk["score"],
+                        risk["level"],
+                        json.dumps(risk["reasons"], ensure_ascii=True),
                     ),
                 )
             conn.commit()
@@ -490,6 +553,10 @@ class Database:
                 continue
             d["attack_categories"] = json.loads(str(d.get("attack_categories", "[]")))
             d["severity_counts"] = json.loads(str(d.get("severity_counts", "{}")))
+            if isinstance(d.get("risk_reasons"), str):
+                d["risk_reasons"] = json.loads(str(d.get("risk_reasons", "[]")))
+            elif not isinstance(d.get("risk_reasons"), list):
+                d["risk_reasons"] = []
             results.append(d)
 
         return results, total
@@ -556,6 +623,16 @@ class Database:
                 """
             ).fetchall()
 
+            risk_levels = conn.execute(
+                """
+                SELECT risk_level, COUNT(*) as cnt
+                  FROM events
+                 WHERE risk_level IS NOT NULL
+                 GROUP BY risk_level
+                 ORDER BY cnt DESC
+                """
+            ).fetchall()
+
         return {
             "total_events": total,
             "unique_source_ips": unique_ips,
@@ -564,6 +641,7 @@ class Database:
             "by_attack_category": {r["attack_category"]: r["cnt"] for r in categories},
             "by_event_type": {r["event_type"]: r["cnt"] for r in event_types},
             "by_protocol": {r["protocol"]: r["cnt"] for r in protocols},
+            "by_risk_level": {r["risk_level"]: r["cnt"] for r in risk_levels},
         }
 
     def get_top_threats(self, limit: int = 10) -> list[dict[str, Any]]:
@@ -617,6 +695,7 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     attack_cat = d.pop("attack_category", None)
     severity = d.pop("severity", None)
     class_reason = d.pop("classification_reason", None)
+    d["attack_category"] = attack_cat or "unknown"
     d["classification"] = {
         "attack_category": attack_cat or "unknown",
         "severity": severity or "low",
@@ -637,6 +716,12 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     vt_is_mal = d.pop("virustotal_is_malicious", None)
 
     if ti_status is not None:
+        d["ti_status"] = ti_status
+        d["ti_confidence"] = ti_confidence
+        d["ti_is_malicious"] = ti_is_malicious
+        d["abuseipdb_score"] = abuse_score
+        d["virustotal_malicious"] = vt_mal
+        d["virustotal_suspicious"] = vt_sus
         d["threat_intel"] = {
             "status": ti_status,
             "lookup_ip": d.get("source_ip"),
@@ -664,12 +749,18 @@ def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
         d["threat_intel"] = None
 
     # ── Parse JSON fields ───────────────────────────────────────────
-    for key in ("raw_event", "raw_result"):
+    for key in ("raw_event", "raw_result", "risk_reasons"):
         val = d.get(key)
         if isinstance(val, str):
             try:
                 d[key] = json.loads(val)
             except json.JSONDecodeError:
                 pass
+
+    d["risk"] = {
+        "score": d.get("risk_score") or 0,
+        "level": d.get("risk_level") or "minimal",
+        "reasons": d.get("risk_reasons") if isinstance(d.get("risk_reasons"), list) else [],
+    }
 
     return d

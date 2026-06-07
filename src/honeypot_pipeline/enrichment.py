@@ -5,6 +5,7 @@ from typing import Any
 from .abuseipdb import AbuseIPDBClient
 from .models import NormalizedEvent
 from .records import build_event_record
+from .risk import score_event_record
 from .virustotal import VirusTotalClient
 
 
@@ -108,6 +109,7 @@ def enrich_event_with_threat_intel(
         "providers": providers,
         "score": _merge_score(providers),
     }
+    record["risk"] = score_event_record(record)
     return record
 
 
