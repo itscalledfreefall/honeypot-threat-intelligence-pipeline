@@ -9,6 +9,12 @@ _CATEGORY_POINTS = {
     "command_execution": 20,
     "malware_download": 35,
     "persistence": 40,
+    "destructive_action": 45,
+    "cryptomining": 40,
+    "privilege_escalation": 35,
+    "defense_evasion": 30,
+    "credential_access": 25,
+    "obfuscation": 20,
 }
 
 _SEVERITY_POINTS = {
@@ -144,10 +150,33 @@ def score_session_snapshot(
         score += 15
         reasons.append("download_plus_persistence")
 
+    if "reconnaissance" in categories and "privilege_escalation" in categories:
+        score += 15
+        reasons.append("recon_plus_privilege_escalation")
+
+    if "malware_download" in categories and "cryptomining" in categories:
+        score += 15
+        reasons.append("download_plus_cryptomining")
+
+    if "brute_force" in categories and "credential_access" in categories:
+        score += 15
+        reasons.append("credential_access_after_login")
+
+    if "destructive_action" in categories:
+        score += 10
+        reasons.append("destructive_action_present")
+
+    if "defense_evasion" in categories and "privilege_escalation" in categories:
+        score += 10
+        reasons.append("evasion_plus_privilege_escalation")
+
+    if "obfuscation" in categories and "malware_download" in categories:
+        score += 10
+        reasons.append("obfuscated_download")
+
     score = _clamp_score(score)
     return {
         "score": score,
         "level": risk_level(score),
         "reasons": reasons or ["no_risk_rule_matched"],
     }
-

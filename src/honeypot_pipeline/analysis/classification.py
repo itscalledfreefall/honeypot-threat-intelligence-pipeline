@@ -36,6 +36,96 @@ _PERSISTENCE_MARKERS = (
     "/etc/rc.local",
 )
 
+_PRIVESC_MARKERS = (
+    "sudo -l",
+    "find / -perm -4000",
+    "/etc/sudoers",
+    "getcap",
+    "chmod u+s",
+    "pkexec",
+)
+
+_CREDENTIAL_ACCESS_MARKERS = (
+    "/etc/shadow",
+    "id_rsa",
+    ".bash_history",
+    "grep -r password",
+    "find / -name *.key",
+    "~/.aws/credentials",
+    "cat ~/.ssh/",
+    "ls -la ~/.ssh",
+    ".dockercfg",
+    "wp-config.php",
+    "credentials",
+)
+
+_CRYPTOMINING_MARKERS = (
+    "xmrig",
+    "stratum+tcp",
+    "--pool",
+    "--wallet",
+    "minergate",
+    "cpuminer",
+    "minerd",
+    "ccminer",
+    "ethminer",
+    "t-rex",
+    "phoenixminer",
+    "lolminer",
+    "nbminer",
+    "gminer",
+    "--algo ",
+    "cryptonight",
+    "randomx",
+)
+
+_OBFUSCATION_MARKERS = (
+    "base64 -d",
+    "base64 --decode",
+    "| base64",
+    "eval ",
+    "sh -c",
+    "| sh",
+    "| bash",
+    "/dev/tcp/",
+)
+
+_DEFENSE_EVASION_MARKERS = (
+    "rm -rf /var/log",
+    "> /var/log/",
+    "> .bash_history",
+    "cat /dev/null >",
+    "history -c",
+    "unset histfile",
+    "set +o history",
+    "unset history",
+    "rm -rf /tmp/.",
+    "truncate -s 0",
+    "systemctl stop",
+    "service stop",
+    "ufw disable",
+)
+
+_DESTRUCTIVE_MARKERS = (
+    "rm -rf / ",
+    "rm -rf /*",
+    "rm -rf ~/",
+    "rm -rf /tmp",
+    "rm -rf /var",
+    "rm -rf /etc",
+    "rm -rf /home",
+    "rm -rf /root",
+    "mkfs.",
+    ":(){ :|:& };:",
+    "dd if=/dev/zero",
+    "dd if=/dev/urandom",
+    "> /dev/sd",
+    "/dev/null of=/dev/",
+    "mv /bin/",
+    "mv /sbin/",
+    "fdisk /dev/",
+)
+
 
 def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker in text for marker in markers)
@@ -74,10 +164,48 @@ def classify_event(event: NormalizedEvent) -> dict[str, str]:
         classification["reason"] = "The command suggests an attempt to maintain access."
         return classification
 
+    # ── New high-confidence specific categories (before generic fallback) ────
+
+    if _contains_any(command, _DESTRUCTIVE_MARKERS):
+        classification["attack_category"] = "destructive_action"
+        classification["severity"] = "high"
+        classification["reason"] = "The command indicates destructive or wiper-like intent."
+        return classification
+
+    if _contains_any(command, _CRYPTOMINING_MARKERS):
+        classification["attack_category"] = "cryptomining"
+        classification["severity"] = "high"
+        classification["reason"] = "The command references cryptomining tools or pool connections."
+        return classification
+
+    if _contains_any(command, _DEFENSE_EVASION_MARKERS):
+        classification["attack_category"] = "defense_evasion"
+        classification["severity"] = "high"
+        classification["reason"] = "The command appears to clear logs or disable defenses."
+        return classification
+
+    if _contains_any(command, _PRIVESC_MARKERS):
+        classification["attack_category"] = "privilege_escalation"
+        classification["severity"] = "high"
+        classification["reason"] = "The command attempts to elevate privileges or enumerate escalation paths."
+        return classification
+
+    if _contains_any(command, _CREDENTIAL_ACCESS_MARKERS):
+        classification["attack_category"] = "credential_access"
+        classification["severity"] = "medium"
+        classification["reason"] = "The command targets credential files, keys, or sensitive configuration."
+        return classification
+
     if _contains_any(command, _RECON_MARKERS):
         classification["attack_category"] = "reconnaissance"
         classification["severity"] = "low"
         classification["reason"] = "The command matches common host-enumeration behavior."
+        return classification
+
+    if _contains_any(command, _OBFUSCATION_MARKERS):
+        classification["attack_category"] = "obfuscation"
+        classification["severity"] = "medium"
+        classification["reason"] = "The command uses obfuscation techniques such as base64 decoding or eval."
         return classification
 
     if command:
