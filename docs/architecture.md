@@ -37,41 +37,41 @@ schema for downstream analysis. Parser-specific fields remain available through
 
 ### IOC Extraction
 
-`src/honeypot_pipeline/ioc.py` extracts indicators from normalized fields and
-from attacker-controlled text such as commands and URLs. Extracted indicators
+`src/honeypot_pipeline/analysis/ioc.py` extracts indicators from normalized fields
+and from attacker-controlled text such as commands and URLs. Extracted indicators
 are structured by type so future enrichers can operate on IPs, URLs, domains,
 hashes, file paths, and payload references independently.
 
 ### Classification And Risk
 
-`src/honeypot_pipeline/classification.py` assigns deterministic categories such
-as brute force, reconnaissance, malware download, persistence, and command
-execution. `src/honeypot_pipeline/risk.py` converts event and session evidence
-into a risk score, risk level, and explainable reason list.
+`src/honeypot_pipeline/analysis/classification.py` assigns deterministic
+categories such as brute force, reconnaissance, malware download, persistence,
+and command execution. `src/honeypot_pipeline/analysis/risk.py` converts event
+and session evidence into a risk score, risk level, and explainable reason list.
 
 ### Threat-Intelligence Enrichment
 
-`src/honeypot_pipeline/enrichment.py` supports AbuseIPDB and VirusTotal lookups.
+`src/honeypot_pipeline/enrichment/` supports AbuseIPDB and VirusTotal lookups.
 Provider results are merged into a common score, while provider-specific raw
 results remain attached for auditability.
 
 ### SQLite Storage
 
-`src/honeypot_pipeline/database.py` stores events, enrichment results, and
+`src/honeypot_pipeline/storage/database.py` stores events, enrichment results, and
 attack sessions. SQLite is used because it is reproducible, container-friendly,
 and sufficient for the lab scope. The schema is designed so it can later move to
 PostgreSQL if multi-node ingestion is needed.
 
 ### API And Dashboard
 
-`src/honeypot_pipeline/dashboard.py` exposes a read-only Flask JSON API. The
+`src/honeypot_pipeline/api/dashboard.py` exposes a read-only Flask JSON API. The
 React frontend consumes that API to show summaries, events, sessions, timelines,
 and export links.
 
 ### Reporting And Response
 
-`src/honeypot_pipeline/reporting.py` builds markdown reports, malicious-event
-exports, and blocklists. `src/honeypot_pipeline/response.py` turns reviewed
+`src/honeypot_pipeline/reporting/` builds markdown reports, malicious-event
+exports, and blocklists. `src/honeypot_pipeline/response/` turns reviewed
 blocklist candidates into iptables rules. Response actions are dry-run by
 default.
 
@@ -127,10 +127,9 @@ graduation-project evaluation.
 The project is intentionally structured so future work can be added without
 rewriting the pipeline:
 
-- Add another honeypot parser beside `cowrie.py`.
-- Add another IOC type in `ioc.py`.
+- Add another honeypot parser under `parsers/`.
+- Add another IOC type in `analysis/ioc.py`.
 - Add another enrichment provider beside AbuseIPDB and VirusTotal.
 - Add another storage backend behind the database API.
-- Add new risk factors in `risk.py`.
+- Add new risk factors in `analysis/risk.py`.
 - Add dashboard views without changing parser logic.
-

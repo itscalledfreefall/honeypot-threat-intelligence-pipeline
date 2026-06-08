@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .dashboard_data import load_dataset
-from .storage import write_json_document
+from ..api.dashboard_data import load_dataset
+from ..storage import write_json_document
 
 
 def is_record_malicious(record: dict[str, Any]) -> bool:

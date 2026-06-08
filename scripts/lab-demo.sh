@@ -8,7 +8,7 @@ RECORDS_FILE="${ROOT_DIR}/exports/cowrie.records.jsonl"
 SUMMARY_FILE="${ROOT_DIR}/reports/generated/cowrie.summary.json"
 REPORT_DIR="${ROOT_DIR}/reports/generated/demo-bundle"
 DB_FILE="${ROOT_DIR}/data/honeypot.db"
-FRONTEND_DIR="${ROOT_DIR}/sharingan-frontend"
+FRONTEND_DIR="${ROOT_DIR}/frontend"
 
 usage() {
   cat <<'EOF'

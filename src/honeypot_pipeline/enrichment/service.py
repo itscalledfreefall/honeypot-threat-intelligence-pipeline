@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from .abuseipdb import AbuseIPDBClient
-from .models import NormalizedEvent
-from .records import build_event_record
-from .risk import score_event_record
+from ..analysis.records import build_event_record
+from ..analysis.risk import score_event_record
+from ..models import NormalizedEvent
 from .virustotal import VirusTotalClient
 
 
