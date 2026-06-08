@@ -14,10 +14,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .dashboard_data import load_dataset
-from .database import Database
-from .reporting import collect_blocklist_ips
-from .settings import Settings
+from ..api.dashboard_data import load_dataset
+from ..reporting import collect_blocklist_ips
+from ..settings import Settings
+from ..storage.database import Database
 
 
 class FirewallManager:
@@ -236,7 +236,7 @@ def _resolve_blocklist_ips(
     if records_file is not None and records_file.exists():
         dataset = load_dataset(records_file)
         if malicious_only:
-            from .reporting import get_malicious_records
+            from ..reporting import get_malicious_records
             records = get_malicious_records(dataset.records)
         else:
             records = dataset.records

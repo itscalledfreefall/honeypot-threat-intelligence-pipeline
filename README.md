@@ -37,24 +37,35 @@ This is the right first step because all later features depend on trustworthy ev
 
 - `src/honeypot_pipeline/models.py`
   Defines the normalized event structure used across the pipeline.
-- `src/honeypot_pipeline/cowrie.py`
-  Parses and normalizes Cowrie JSON log lines.
-- `src/honeypot_pipeline/ioc.py`
-  Extracts indicators such as IP addresses, usernames, passwords, commands, and URLs.
-- `src/honeypot_pipeline/classification.py`
-  Assigns a simple attack category and severity to each event.
-- `src/honeypot_pipeline/enrichment.py`
+- `src/honeypot_pipeline/parsers/`
+  Parses and normalizes honeypot-specific logs such as Cowrie JSON lines.
+- `src/honeypot_pipeline/analysis/`
+  Extracts indicators, classifies behavior, builds records, tracks summaries, and scores risk.
+- `src/honeypot_pipeline/enrichment/`
   Queries AbuseIPDB and VirusTotal for threat intelligence on attacker IPs.
-- `src/honeypot_pipeline/database.py`
-  Persistent SQLite storage with deduplication, attack sessions, and threat intel.
-- `src/honeypot_pipeline/response.py`
-  Automated iptables firewall blocking from pipeline threat intelligence.
+- `src/honeypot_pipeline/storage/`
+  Provides persistent SQLite storage and JSON output helpers.
+- `src/honeypot_pipeline/api/`
+  Runs a read-only Flask dashboard API over processed event records and summaries.
+- `src/honeypot_pipeline/reporting/`
+  Generates markdown reports, malicious-event exports, and blocklist outputs.
+- `src/honeypot_pipeline/response/`
+  Provides safe-by-default iptables firewall blocking from pipeline threat intelligence.
 - `src/honeypot_pipeline/cli.py`
   Command-line entry point for normalizing Cowrie logs and running enrichment.
-- `src/honeypot_pipeline/dashboard.py`
-  Runs a read-only web dashboard over processed event records and summaries.
+- `frontend/`
+  React dashboard application served by the frontend container.
 - `tests/`
   Automated tests for parsers, classification, enrichment, database, response, and API.
+
+More detailed design notes are available in:
+
+- `docs/architecture.md`
+  End-to-end component model, data flow, deployment shape, and extension points.
+- `docs/safety-model.md`
+  Lab safety assumptions, trust boundaries, response safety, and known limitations.
+- `docs/deployment.md`
+  Demo-server setup, container rebuild guidance, and ignored runtime output paths.
 
 ## Why Cowrie First
 

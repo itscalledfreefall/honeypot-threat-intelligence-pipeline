@@ -4,11 +4,11 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Install deps (package.json + lock file for caching)
-COPY sharingan-frontend/package.json sharingan-frontend/package-lock.json* ./
+COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm install
 
 # Copy source and build
-COPY sharingan-frontend/ ./
+COPY frontend/ ./
 RUN npm run build
 
 # ── Stage 2: Serve with nginx ──────────────────────────────────
