@@ -10,6 +10,7 @@ from typing import Any
 from flask import Flask, abort, jsonify, request, send_file
 from flask_cors import CORS
 
+from ..auth import AuthError, CLOUD_PROVIDERS
 from .dashboard_data import (
     DashboardDataset,
     filter_records,
@@ -73,6 +74,25 @@ def create_app(
         db.initialize()
         return db
 
+    def _auth_db() -> Database | None:
+        if app.config.get("DB_PATH") is None:
+            return None
+        return _get_db()
+
+    def _request_json() -> dict[str, Any]:
+        payload = request.get_json(silent=True)
+        return payload if isinstance(payload, dict) else {}
+
+    def _bearer_token() -> str:
+        header = request.headers.get("Authorization", "")
+        prefix = "Bearer "
+        if header.startswith(prefix):
+            return header[len(prefix):].strip()
+        return ""
+
+    def _auth_unavailable():
+        return jsonify({"error": "Database-backed authentication is not configured."}), 503
+
     def get_dataset() -> DashboardDataset:
         if _has_db():
             db = _get_db()
@@ -90,6 +110,125 @@ def create_app(
         return dataset
 
     # ── JSON API Endpoints ──────────────────────────────────────────────
+
+    @app.route("/api/auth/options")
+    def api_auth_options():
+        return jsonify({"cloud_providers": CLOUD_PROVIDERS})
+
+    @app.route("/api/auth/register", methods=["POST"])
+    def api_auth_register():
+        db = _auth_db()
+        if db is None:
+            return _auth_unavailable()
+
+        payload = _request_json()
+        try:
+            user = db.create_user(
+                email=str(payload.get("email", "")),
+                password=str(payload.get("password", "")),
+                first_name=str(payload.get("first_name", "")),
+                middle_name=payload.get("middle_name"),
+                cloud_provider=str(payload.get("cloud_provider", "")),
+            )
+            token = db.create_session(user["user_id"])
+        except AuthError as exc:
+            db.close()
+            return jsonify({"error": str(exc)}), 400
+        finally:
+            db.close()
+
+        return jsonify({"user": user, "token": token}), 201
+
+    @app.route("/api/auth/login", methods=["POST"])
+    def api_auth_login():
+        db = _auth_db()
+        if db is None:
+            return _auth_unavailable()
+
+        payload = _request_json()
+        try:
+            user = db.authenticate_user(
+                email=str(payload.get("email", "")),
+                password=str(payload.get("password", "")),
+            )
+        except AuthError as exc:
+            db.close()
+            return jsonify({"error": str(exc)}), 400
+
+        if user is None:
+            db.close()
+            return jsonify({"error": "Invalid email or password."}), 401
+
+        token = db.create_session(user["user_id"])
+        db.close()
+        return jsonify({"user": user, "token": token})
+
+    @app.route("/api/auth/me")
+    def api_auth_me():
+        db = _auth_db()
+        if db is None:
+            return _auth_unavailable()
+
+        user = db.get_user_by_session_token(_bearer_token())
+        db.close()
+        if user is None:
+            return jsonify({"error": "Authentication required."}), 401
+        return jsonify({"user": user})
+
+    @app.route("/api/auth/logout", methods=["POST"])
+    def api_auth_logout():
+        db = _auth_db()
+        if db is None:
+            return _auth_unavailable()
+
+        token = _bearer_token()
+        if token:
+            db.revoke_session(token)
+        db.close()
+        return jsonify({"ok": True})
+
+    @app.route("/api/auth/password-reset/request", methods=["POST"])
+    def api_auth_password_reset_request():
+        db = _auth_db()
+        if db is None:
+            return _auth_unavailable()
+
+        payload = _request_json()
+        try:
+            reset_token = db.create_password_reset_token(str(payload.get("email", "")))
+        except AuthError as exc:
+            db.close()
+            return jsonify({"error": str(exc)}), 400
+        db.close()
+
+        response: dict[str, Any] = {
+            "message": "If the email exists, a password reset token has been generated."
+        }
+        if reset_token:
+            response["reset_token"] = reset_token
+            response["delivery"] = "local_demo"
+        return jsonify(response)
+
+    @app.route("/api/auth/password-reset/confirm", methods=["POST"])
+    def api_auth_password_reset_confirm():
+        db = _auth_db()
+        if db is None:
+            return _auth_unavailable()
+
+        payload = _request_json()
+        try:
+            ok = db.reset_password(
+                token=str(payload.get("token", "")),
+                new_password=str(payload.get("password", "")),
+            )
+        except AuthError as exc:
+            db.close()
+            return jsonify({"error": str(exc)}), 400
+        db.close()
+
+        if not ok:
+            return jsonify({"error": "Reset token is invalid or expired."}), 400
+        return jsonify({"ok": True})
 
     @app.route("/api/summary")
     def api_summary():
@@ -395,14 +534,7 @@ def main() -> int:
 
     settings = Settings.from_env()
 
-    # Resolve database path
-    db_path: Path | None = None
-    if args.db:
-        db_path = args.db
-    else:
-        db_url = settings.database_url
-        if db_url and db_url != "data/honeypot.db" or Path(db_url).exists():
-            db_path = Path(db_url)
+    db_path = args.db or Path(settings.database_url)
 
     # Pre-initialize the database so the file exists
     if db_path is not None:

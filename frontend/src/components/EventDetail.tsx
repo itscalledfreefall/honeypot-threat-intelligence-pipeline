@@ -33,7 +33,13 @@ interface EventRecord {
     severity: string;
     reason: string;
   };
-  threat_intel?: Record<string, unknown>;
+  threat_intel?: {
+    score?: {
+      is_malicious?: boolean;
+      confidence?: string;
+    };
+    [key: string]: unknown;
+  };
   raw_event?: Record<string, unknown>;
 }
 
@@ -54,7 +60,7 @@ const EventDetail: React.FC = () => {
         }
         setEvent(await res.json());
         setLoading(false);
-      } catch (err) {
+      } catch {
         setError('Failed to connect to API');
         setLoading(false);
       }
@@ -125,7 +131,7 @@ const EventDetail: React.FC = () => {
             <span className="category-pill">
               {event.classification?.attack_category || 'unclassified'}
             </span>
-            {event.threat_intel && (event.threat_intel as any)?.score?.is_malicious && (
+            {event.threat_intel?.score?.is_malicious && (
               <span className="severity-pill high">malicious</span>
             )}
           </div>

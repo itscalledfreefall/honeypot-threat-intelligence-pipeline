@@ -8,12 +8,23 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from ..analysis.risk import score_session_snapshot
+from ..auth import (
+    AuthError,
+    generate_token,
+    hash_password,
+    hash_token,
+    public_user,
+    validate_cloud_provider,
+    validate_email,
+    verify_password,
+)
 
 DDL_STATEMENTS = [
     # ── Events ──────────────────────────────────────────────────────────
@@ -119,6 +130,54 @@ SCHEMA_COLUMNS = {
     },
 }
 
+MIGRATIONS: list[tuple[str, str]] = [
+    (
+        "0001_create_auth_tables",
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         TEXT NOT NULL UNIQUE,
+            email           TEXT NOT NULL UNIQUE,
+            first_name      TEXT NOT NULL,
+            middle_name     TEXT,
+            cloud_provider  TEXT NOT NULL,
+            password_hash   TEXT NOT NULL,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+        CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id);
+
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     TEXT NOT NULL,
+            token_hash  TEXT NOT NULL UNIQUE,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            expires_at  TEXT NOT NULL,
+            revoked_at  TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions(token_hash);
+
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     TEXT NOT NULL,
+            token_hash  TEXT NOT NULL UNIQUE,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            expires_at  TEXT NOT NULL,
+            used_at     TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+        CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
+        """,
+    )
+]
+
 DEDUP_WINDOW_SECONDS = 60
 
 # ── Public API ────────────────────────────────────────────────────────────
@@ -153,8 +212,31 @@ class Database:
         with self.connection() as conn:
             for stmt in DDL_STATEMENTS:
                 conn.execute(stmt)
+            self._apply_migrations(conn)
             self._ensure_columns(conn)
             conn.commit()
+
+    def _apply_migrations(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version     TEXT PRIMARY KEY,
+                applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        applied = {
+            row["version"]
+            for row in conn.execute("SELECT version FROM schema_migrations").fetchall()
+        }
+        for version, sql in MIGRATIONS:
+            if version in applied:
+                continue
+            conn.executescript(sql)
+            conn.execute(
+                "INSERT INTO schema_migrations (version) VALUES (?)",
+                (version,),
+            )
 
     def _ensure_columns(self, conn: sqlite3.Connection) -> None:
         """Add columns introduced after the initial schema.
@@ -681,6 +763,193 @@ class Database:
             "attack_categories": attack_categories,
             "protocols": protocols,
         }
+
+    # ── Dashboard users and authentication ─────────────────────────────
+
+    def create_user(
+        self,
+        *,
+        email: str,
+        password: str,
+        first_name: str,
+        middle_name: str | None,
+        cloud_provider: str,
+    ) -> dict[str, Any]:
+        normalized_email = validate_email(email)
+        first = first_name.strip()
+        middle = middle_name.strip() if middle_name else None
+        provider = validate_cloud_provider(cloud_provider)
+        if not first:
+            raise AuthError("First name is required.")
+
+        user_id = self._new_user_id()
+        password_digest = hash_password(password)
+        try:
+            with self.connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO users (
+                        user_id, email, first_name, middle_name,
+                        cloud_provider, password_hash
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (user_id, normalized_email, first, middle, provider, password_digest),
+                )
+                conn.commit()
+        except sqlite3.IntegrityError as exc:
+            if "users.email" in str(exc):
+                raise AuthError("An account with this email already exists.") from exc
+            if "users.user_id" in str(exc):
+                return self.create_user(
+                    email=email,
+                    password=password,
+                    first_name=first_name,
+                    middle_name=middle_name,
+                    cloud_provider=cloud_provider,
+                )
+            raise
+
+        user = self.get_user_by_email(normalized_email)
+        if user is None:
+            raise RuntimeError("User creation succeeded but user could not be loaded.")
+        return user
+
+    def authenticate_user(self, email: str, password: str) -> dict[str, Any] | None:
+        normalized_email = validate_email(email)
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE email = ?",
+                (normalized_email,),
+            ).fetchone()
+        if row is None or not verify_password(password, row["password_hash"]):
+            return None
+        return public_user(dict(row))
+
+    def create_session(self, user_id: str, days: int = 7) -> str:
+        token = generate_token()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_sessions (user_id, token_hash, expires_at)
+                VALUES (?, ?, datetime('now', ?))
+                """,
+                (user_id, hash_token(token), f"+{days} days"),
+            )
+            conn.commit()
+        return token
+
+    def revoke_session(self, token: str) -> None:
+        with self.connection() as conn:
+            conn.execute(
+                """
+                UPDATE user_sessions
+                   SET revoked_at = datetime('now')
+                 WHERE token_hash = ?
+                """,
+                (hash_token(token),),
+            )
+            conn.commit()
+
+    def get_user_by_session_token(self, token: str) -> dict[str, Any] | None:
+        if not token:
+            return None
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT u.*
+                  FROM user_sessions s
+                  JOIN users u ON u.user_id = s.user_id
+                 WHERE s.token_hash = ?
+                   AND s.revoked_at IS NULL
+                   AND datetime(s.expires_at) > datetime('now')
+                """,
+                (hash_token(token),),
+            ).fetchone()
+        return public_user(dict(row)) if row else None
+
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        normalized_email = validate_email(email)
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE email = ?",
+                (normalized_email,),
+            ).fetchone()
+        return public_user(dict(row)) if row else None
+
+    def create_password_reset_token(self, email: str, minutes: int = 30) -> str | None:
+        normalized_email = validate_email(email)
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT user_id FROM users WHERE email = ?",
+                (normalized_email,),
+            ).fetchone()
+            if row is None:
+                return None
+            token = generate_token()
+            conn.execute(
+                """
+                UPDATE password_reset_tokens
+                   SET used_at = datetime('now')
+                 WHERE user_id = ? AND used_at IS NULL
+                """,
+                (row["user_id"],),
+            )
+            conn.execute(
+                """
+                INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+                VALUES (?, ?, datetime('now', ?))
+                """,
+                (row["user_id"], hash_token(token), f"+{minutes} minutes"),
+            )
+            conn.commit()
+        return token
+
+    def reset_password(self, token: str, new_password: str) -> bool:
+        token_digest = hash_token(token)
+        password_digest = hash_password(new_password)
+        with self.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT id, user_id
+                  FROM password_reset_tokens
+                 WHERE token_hash = ?
+                   AND used_at IS NULL
+                   AND datetime(expires_at) > datetime('now')
+                """,
+                (token_digest,),
+            ).fetchone()
+            if row is None:
+                return False
+
+            conn.execute(
+                """
+                UPDATE users
+                   SET password_hash = ?, updated_at = datetime('now')
+                 WHERE user_id = ?
+                """,
+                (password_digest, row["user_id"]),
+            )
+            conn.execute(
+                """
+                UPDATE password_reset_tokens
+                   SET used_at = datetime('now')
+                 WHERE id = ?
+                """,
+                (row["id"],),
+            )
+            conn.execute(
+                """
+                UPDATE user_sessions
+                   SET revoked_at = datetime('now')
+                 WHERE user_id = ? AND revoked_at IS NULL
+                """,
+                (row["user_id"],),
+            )
+            conn.commit()
+        return True
+
+    def _new_user_id(self) -> str:
+        return f"user_{uuid.uuid4().hex}"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

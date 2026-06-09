@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import SharinganLogo from './SharinganLogo';
 import './Dashboard.css';
 
@@ -71,9 +71,27 @@ interface SessionTimelineData {
   source_ip: string;
 }
 
+interface AuthUser {
+  user_id: string;
+  email: string;
+  first_name: string;
+  middle_name?: string | null;
+  cloud_provider: string;
+}
+
 const REFRESH_INTERVAL = 3000;
 
 const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => {
+    const raw = localStorage.getItem('authUser');
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as AuthUser;
+    } catch {
+      return null;
+    }
+  });
   const [summary, setSummary] = useState<SummaryData | null>(null);
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [threats, setThreats] = useState<Threat[]>([]);
@@ -170,15 +188,55 @@ const Dashboard: React.FC = () => {
     setSessionTimeline(null);
   };
 
+  const handleLogout = async () => {
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => undefined);
+    }
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('authUser');
+    navigate('/login', { replace: true });
+  };
+
   useEffect(() => {
-    fetchData();
+    const timeout = window.setTimeout(fetchData, 0);
     const interval = setInterval(fetchData, REFRESH_INTERVAL);
-    return () => clearInterval(interval);
+    return () => {
+      window.clearTimeout(timeout);
+      clearInterval(interval);
+    };
   }, [fetchData]);
 
   useEffect(() => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+    fetch('/api/auth/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error('session expired');
+        return res.json();
+      })
+      .then((data) => {
+        if (data.user) {
+          setAuthUser(data.user);
+          localStorage.setItem('authUser', JSON.stringify(data.user));
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('authUser');
+        navigate('/login', { replace: true });
+      });
+  }, [navigate]);
+
+  useEffect(() => {
     if (activeNav === 'sessions') {
-      fetchSessions();
+      const timeout = window.setTimeout(fetchSessions, 0);
+      return () => window.clearTimeout(timeout);
     }
   }, [activeNav, fetchSessions]);
 
@@ -252,7 +310,7 @@ const Dashboard: React.FC = () => {
           <a href="/api/exports/report.md" target="_blank" rel="noopener noreferrer">↓ Report</a>
         </nav>
         <div className="sidebar-footer">
-          <Link to="/" className="logout-btn">Back to Home</Link>
+          <button className="logout-btn" onClick={handleLogout}>Sign out</button>
         </div>
       </aside>
       
@@ -279,7 +337,13 @@ const Dashboard: React.FC = () => {
             <span className="status-indicator">
               Live · {lastUpdate.toLocaleTimeString()}
             </span>
-            <div className="user-profile"></div>
+            <div className="user-chip">
+              <div className="user-profile">{authUser?.first_name?.charAt(0).toUpperCase() || 'U'}</div>
+              <div>
+                <strong>{authUser?.first_name || 'Operator'}</strong>
+                <span>{authUser?.cloud_provider?.replace(/_/g, ' ') || 'dashboard'}</span>
+              </div>
+            </div>
           </div>
         </header>
 
