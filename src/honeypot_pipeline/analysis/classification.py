@@ -127,6 +127,15 @@ _DESTRUCTIVE_MARKERS = (
 )
 
 
+_SESSION_EVENT_MARKERS = (
+    "session.closed",
+    "session.params",
+    "log.closed",
+    "log.open",
+    "client.",
+)
+
+
 def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker in text for marker in markers)
 
@@ -212,5 +221,26 @@ def classify_event(event: NormalizedEvent) -> dict[str, str]:
         classification["attack_category"] = "command_execution"
         classification["severity"] = "medium"
         classification["reason"] = "The attacker executed a command on the honeypot."
+        return classification
+
+    # ── Session / connection lifecycle events (no attacker command) ──────────
+
+    if "direct-tcpip" in event_type:
+        classification["attack_category"] = "connection"
+        classification["severity"] = "medium"
+        classification["reason"] = "The client requested a forwarded TCP/IP channel, indicating tunneling or pivot attempts."
+        return classification
+
+    if "session.connect" in event_type:
+        classification["attack_category"] = "connection"
+        classification["severity"] = "low"
+        classification["reason"] = "A new session was established with the honeypot."
+        return classification
+
+    if _contains_any(event_type, _SESSION_EVENT_MARKERS):
+        classification["attack_category"] = "session"
+        classification["severity"] = "low"
+        classification["reason"] = "Session lifecycle or client metadata reported by the honeypot."
+        return classification
 
     return classification

@@ -19,6 +19,17 @@ def _make_command_event(command: str) -> dict:
     )
 
 
+def _make_lifecycle_event(eventid: str) -> dict:
+    """Helper: normalize a non-command Cowrie lifecycle/metadata event."""
+    return normalize_cowrie_event(
+        {
+            "eventid": eventid,
+            "protocol": "ssh",
+            "src_ip": "192.168.1.32",
+        }
+    )
+
+
 class ClassificationTests(unittest.TestCase):
     # ── Existing categories (regression) ──────────────────────────────
 
@@ -210,6 +221,70 @@ class ClassificationTests(unittest.TestCase):
         event = _make_command_event("rm -rf /var/log/*")
         classification = classify_event(event)
         self.assertEqual(classification["attack_category"], "destructive_action")
+
+    # ── Session / connection lifecycle events (no command) ────────────
+
+    def test_session_connect_is_connection(self) -> None:
+        event = _make_lifecycle_event("cowrie.session.connect")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "connection")
+        self.assertEqual(classification["severity"], "low")
+
+    def test_direct_tcpip_request_is_connection_medium(self) -> None:
+        event = _make_lifecycle_event("cowrie.direct-tcpip.request")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "connection")
+        self.assertEqual(classification["severity"], "medium")
+
+    def test_session_closed_is_session(self) -> None:
+        event = _make_lifecycle_event("cowrie.session.closed")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "session")
+        self.assertEqual(classification["severity"], "low")
+
+    def test_session_params_is_session(self) -> None:
+        event = _make_lifecycle_event("cowrie.session.params")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "session")
+
+    def test_log_closed_is_session(self) -> None:
+        event = _make_lifecycle_event("cowrie.log.closed")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "session")
+
+    def test_client_var_is_session(self) -> None:
+        event = _make_lifecycle_event("cowrie.client.var")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "session")
+
+    def test_client_version_is_session(self) -> None:
+        event = _make_lifecycle_event("cowrie.client.version")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "session")
+
+    def test_login_still_beats_session_mapping(self) -> None:
+        """A login event carries 'session'-like data but must stay brute_force."""
+        event = normalize_cowrie_event(
+            {
+                "eventid": "cowrie.login.failed",
+                "protocol": "ssh",
+                "src_ip": "203.0.113.10",
+                "session": "abc123",
+            }
+        )
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "brute_force")
+
+    def test_command_input_not_treated_as_session(self) -> None:
+        """A command.input event with a command must classify on the command."""
+        event = _make_command_event("ls -la")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "command_execution")
+
+    def test_truly_unknown_event_stays_unknown(self) -> None:
+        event = _make_lifecycle_event("cowrie.something.weird")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "unknown")
 
     # ── Regression: existing categories still work ────────────────────
 
