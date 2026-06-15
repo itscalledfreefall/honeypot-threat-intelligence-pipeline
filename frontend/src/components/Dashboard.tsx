@@ -10,6 +10,7 @@ interface SummaryData {
   blocklist_count: number;
   by_attack_category: Record<string, number>;
   by_protocol: Record<string, number>;
+  by_risk_level: Record<string, number>;
 }
 
 interface EventRecord {
@@ -105,6 +106,7 @@ const Dashboard: React.FC = () => {
   const [filterEventType, setFilterEventType] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
   const [filterProtocol, setFilterProtocol] = useState('');
+  const [filterMaliciousOnly, setFilterMaliciousOnly] = useState(false);
 
   // Sessions
   const [sessions, setSessions] = useState<AttackSession[]>([]);
@@ -122,6 +124,7 @@ const Dashboard: React.FC = () => {
       if (filterEventType) params.set('event_type', filterEventType);
       if (filterCategory) params.set('attack_category', filterCategory);
       if (filterProtocol) params.set('protocol', filterProtocol);
+      if (filterMaliciousOnly) params.set('malicious_only', '1');
       const qs = params.toString() ? `?${params.toString()}` : '';
 
       const [summaryRes, eventsRes, threatsRes] = await Promise.all([
@@ -147,7 +150,7 @@ const Dashboard: React.FC = () => {
       console.error('Failed to fetch data:', err);
       setLoading(false);
     }
-  }, [filterIp, filterEventType, filterCategory, filterProtocol]);
+  }, [filterIp, filterEventType, filterCategory, filterProtocol, filterMaliciousOnly]);
 
   const fetchSessions = useCallback(async () => {
     try {
@@ -277,6 +280,7 @@ const Dashboard: React.FC = () => {
     setFilterEventType('');
     setFilterCategory('');
     setFilterProtocol('');
+    setFilterMaliciousOnly(false);
   };
 
   if (loading) {
@@ -379,6 +383,14 @@ const Dashboard: React.FC = () => {
                 <option value="">All Protocols</option>
                 {filterOptions.protocols.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={filterMaliciousOnly}
+                  onChange={(e) => setFilterMaliciousOnly(e.target.checked)}
+                />
+                <span>Malicious only</span>
+              </label>
               <button className="reset-btn" onClick={resetFilters}>Reset</button>
             </div>
           )}
@@ -538,8 +550,83 @@ const Dashboard: React.FC = () => {
             </div>
           )}
 
-          {/* ── Overview / Events / Intelligence (existing views) ──── */}
-          {activeNav !== 'sessions' && !viewingSession && (
+          {/* ── Intelligence View ─────────────────────────────────── */}
+          {activeNav === 'intelligence' && !viewingSession && (
+            <div className="content-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <div className="event-log-panel">
+                <div className="panel-header"><h3>Risk Level Distribution</h3></div>
+                <div className="threat-list">
+                  {summary?.by_risk_level && Object.keys(summary.by_risk_level).length > 0 ? (
+                    Object.entries(summary.by_risk_level)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([level, count]) => (
+                        <div key={level} className="threat-item">
+                          <span className={`severity-pill ${level.toLowerCase()}`}>{level}</span>
+                          <span className="threat-count">{count} events</span>
+                        </div>
+                      ))
+                  ) : (
+                    <div className="threat-item empty"><span className="text-muted">No risk data available</span></div>
+                  )}
+                </div>
+              </div>
+
+              <div className="event-log-panel">
+                <div className="panel-header"><h3>Attack Categories</h3></div>
+                <div className="threat-list">
+                  {summary?.by_attack_category && Object.keys(summary.by_attack_category).length > 0 ? (
+                    Object.entries(summary.by_attack_category)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([cat, count]) => (
+                        <div key={cat} className="threat-item">
+                          <span className="threat-ip">{cat.replace(/_/g, ' ')}</span>
+                          <span className="threat-count">{count}</span>
+                        </div>
+                      ))
+                  ) : (
+                    <div className="threat-item empty"><span className="text-muted">No category data</span></div>
+                  )}
+                </div>
+              </div>
+
+              <div className="event-log-panel">
+                <div className="panel-header"><h3>Protocol Breakdown</h3></div>
+                <div className="threat-list">
+                  {summary?.by_protocol && Object.keys(summary.by_protocol).length > 0 ? (
+                    Object.entries(summary.by_protocol)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([proto, count]) => (
+                        <div key={proto} className="threat-item">
+                          <span className="threat-ip">{proto}</span>
+                          <span className="threat-count">{count}</span>
+                        </div>
+                      ))
+                  ) : (
+                    <div className="threat-item empty"><span className="text-muted">No protocol data</span></div>
+                  )}
+                </div>
+              </div>
+
+              <div className="event-log-panel">
+                <div className="panel-header"><h3>Top Threat IPs</h3></div>
+                <div className="threat-list">
+                  {threats.length > 0 ? (
+                    threats.map((threat, i) => (
+                      <div key={i} className="threat-item">
+                        <span className="threat-ip">{threat.ip}</span>
+                        <span className="threat-count">{threat.count} events</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="threat-item empty"><span className="text-muted">No threats detected yet</span></div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Overview / Events (existing views) ────────────────── */}
+          {activeNav !== 'sessions' && activeNav !== 'intelligence' && !viewingSession && (
             <div className="content-grid">
               <div className="event-log-panel">
                 <div className="panel-header">

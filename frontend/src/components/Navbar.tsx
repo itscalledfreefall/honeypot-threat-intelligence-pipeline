@@ -11,7 +11,7 @@ const Navbar: React.FC = () => {
         <div className="nav-links">
           <a href="#features">Features</a>
           <a href="#preview">Preview</a>
-          <a href="#testimonials">Trust</a>
+          <a href="#preview">Demo</a>
         </div>
         <Link to="/login" className="cta-button">Get Started</Link>
       </div>

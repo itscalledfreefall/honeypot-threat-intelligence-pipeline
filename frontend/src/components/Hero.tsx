@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import './Hero.css';
 
 const Hero: React.FC = () => {
@@ -12,8 +13,8 @@ const Hero: React.FC = () => {
           Unlock supreme vision into your security landscape. Detect, analyze, and neutralize threats with unprecedented precision.
         </p>
         <div className="hero-actions">
-          <button className="primary-btn">Initialize Pipeline</button>
-          <button className="secondary-btn">View Demo</button>
+          <Link to="/login" className="primary-btn">Initialize Pipeline</Link>
+          <a href="#preview" className="secondary-btn">View Demo</a>
         </div>
       </div>
       <div className="hero-background-glow"></div>

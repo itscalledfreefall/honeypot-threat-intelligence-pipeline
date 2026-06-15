@@ -88,3 +88,91 @@ docker compose down -v
 
 Use `down -v` only when you intentionally want to delete collected lab data.
 
+## GitHub Actions CD to a Local VM
+
+Pushes to `main` run `.github/workflows/deploy-vm.yml`. The workflow builds
+the backend and frontend Docker images, pushes them to GitHub Container
+Registry, then runs the deploy job on a self-hosted GitHub Actions runner
+installed on the VM. The local deploy job pulls the latest repository changes,
+pulls the new images, and restarts the Docker Compose stack.
+
+This self-hosted runner approach is intended for a VM on a local or private
+network where GitHub-hosted runners cannot connect over SSH.
+
+The workflow uses the GitHub Environment named:
+
+```text
+production-vm
+```
+
+Create that environment in GitHub repository settings before relying on the
+deployment. Add required reviewers there if deploys should wait for approval.
+
+### Required GitHub Environment Variable
+
+Set `VM_DEPLOY_PATH` as a GitHub Environment variable on `production-vm`. This
+is the repository path on the VM, for example:
+
+```text
+/opt/honeypot-threat-intelligence-pipeline
+```
+
+No VM SSH host, user, port, or private key secrets are needed when deployment
+runs on the self-hosted runner.
+
+### First-Time VM Setup
+
+Install Git and Docker with the Compose plugin on the VM. Then clone the
+repository into the deploy path and create the local runtime `.env`:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git docker.io docker-compose-plugin
+sudo usermod -aG docker "$USER"
+git clone https://github.com/OWNER/REPOSITORY.git /opt/honeypot-threat-intelligence-pipeline
+cd /opt/honeypot-threat-intelligence-pipeline
+cp .env.example .env
+```
+
+Log out and back in after adding the deploy user to the `docker` group.
+
+### Self-Hosted Runner Setup
+
+In GitHub, open the repository settings and add a new self-hosted runner:
+
+```text
+Settings -> Actions -> Runners -> New self-hosted runner
+```
+
+Choose Linux and run the commands GitHub shows on the VM. When configuring the
+runner, give it this label in addition to the default labels:
+
+```text
+honeypot-vm
+```
+
+Install and start the runner service so deploys continue after reboot:
+
+```bash
+sudo ./svc.sh install
+sudo ./svc.sh start
+```
+
+The application `.env` file stays on the VM and is not committed. GitHub Actions
+creates `.env.deploy` during deployment with only the image registry prefix and
+commit tag used by `docker-compose.vm.yml`.
+
+### Manual VM Deploy Command
+
+For testing the VM compose path without GitHub Actions, set the image variables
+and run:
+
+```bash
+cat > .env.deploy <<'EOF'
+GHCR_IMAGE_PREFIX=ghcr.io/OWNER/REPOSITORY
+IMAGE_TAG=latest
+EOF
+
+docker compose --env-file .env.deploy -f docker-compose.yml -f docker-compose.vm.yml pull backend frontend
+docker compose --env-file .env.deploy -f docker-compose.yml -f docker-compose.vm.yml up -d --no-build
+```

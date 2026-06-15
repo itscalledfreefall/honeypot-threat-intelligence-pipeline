@@ -23,6 +23,7 @@ function App() {
           <Route path="/dashboard/events/:id" element={<ProtectedRoute><EventDetail /></ProtectedRoute>} />
           {/* Redirect /events to /dashboard for backwards compat */}
           <Route path="/events" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
     </Router>
