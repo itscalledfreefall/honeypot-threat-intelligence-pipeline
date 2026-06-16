@@ -100,6 +100,11 @@
   color-scheme: dark;
 }
 
+.input-group select option {
+  background: var(--bg-tertiary);
+  color: var(--text-main);
+}
+
 .input-group input:focus,
 .input-group select:focus {
   border-color: rgba(255, 255, 255, 0.2);
