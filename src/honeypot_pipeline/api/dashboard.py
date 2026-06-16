@@ -258,7 +258,7 @@ def create_app(
         token = device.pop("token")
         base_url = request.host_url.rstrip("/")
         install_command = (
-            f"python3 device-agent.py --api-url {base_url} --token {token}"
+            f"python3 scripts/device-agent.py --api-url {base_url} --token {token}"
         )
         return jsonify({
             "device": device,
