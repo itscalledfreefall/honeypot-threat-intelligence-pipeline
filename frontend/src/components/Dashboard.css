@@ -579,3 +579,163 @@
 .row-malicious:hover td {
   background: rgba(225, 29, 72, 0.08) !important;
 }
+
+/* ── Devices ──────────────────────────────────────────────────────── */
+.devices-view {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.device-install-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.device-install-form {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.device-install-form input,
+.device-install-form select {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  min-width: 200px;
+}
+
+.device-install-form select {
+  color-scheme: dark;
+  cursor: pointer;
+}
+
+.device-install-form select option {
+  background: var(--bg-tertiary);
+  color: var(--text-main);
+}
+
+.device-token-box {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  font-size: 0.85rem;
+}
+
+.install-command {
+  display: block;
+  margin: 12px 0;
+  padding: 12px;
+  background: var(--bg-primary);
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+  color: var(--text-main);
+}
+
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.device-grid.single {
+  grid-template-columns: minmax(300px, 520px);
+}
+
+.device-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.device-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.device-card-header h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.device-card-header span {
+  font-size: 0.8rem;
+}
+
+.device-status {
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.device-status.online {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.device-status.stale {
+  background: rgba(234, 179, 8, 0.15);
+  color: #eab308;
+}
+
+.device-status.offline {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+.device-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.device-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.device-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.metric-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.metric-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.device-footer {
+  font-size: 0.75rem;
+  border-top: 1px solid var(--border-color);
+  padding-top: 10px;
+}

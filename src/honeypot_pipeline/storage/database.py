@@ -175,10 +175,56 @@ MIGRATIONS: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
         CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
         """,
-    )
+    ),
+    (
+        "0002_create_devices_table",
+        """
+        CREATE TABLE IF NOT EXISTS devices (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id       TEXT NOT NULL UNIQUE,
+            user_id         TEXT NOT NULL,
+            name            TEXT NOT NULL,
+            provider        TEXT,
+            token_hash      TEXT NOT NULL UNIQUE,
+            hostname        TEXT,
+            last_seen       TEXT,
+            latest_metrics  TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
+        CREATE INDEX IF NOT EXISTS idx_devices_token_hash ON devices(token_hash);
+        """,
+    ),
 ]
 
 DEDUP_WINDOW_SECONDS = 60
+
+# Device heartbeat freshness thresholds (seconds).
+DEVICE_ONLINE_SECONDS = 60
+DEVICE_STALE_SECONDS = 600
+
+# Metric keys accepted from agent heartbeats.  Anything else is dropped so
+# attacker-controlled data cannot smuggle unexpected fields into storage.
+DEVICE_METRIC_KEYS = frozenset(
+    {
+        "hostname",
+        "uptime_seconds",
+        "ram_used_mb",
+        "ram_total_mb",
+        "ram_percent",
+        "load_1m",
+        "load_5m",
+        "load_15m",
+        "cpu_count",
+        "disk_used_gb",
+        "disk_total_gb",
+        "disk_percent",
+        "local_ip",
+        "service_time",
+    }
+)
 
 # ── Public API ────────────────────────────────────────────────────────────
 
@@ -951,8 +997,146 @@ class Database:
     def _new_user_id(self) -> str:
         return f"user_{uuid.uuid4().hex}"
 
+    # ── Devices ─────────────────────────────────────────────────────────
+
+    def create_device(
+        self,
+        *,
+        user_id: str,
+        name: str,
+        provider: str | None,
+    ) -> dict[str, Any]:
+        """Enroll a device for *user_id*.
+
+        Returns the public device record plus a one-time plaintext agent
+        ``token``.  Only the token hash is stored.
+        """
+        device_name = name.strip()
+        if not device_name:
+            raise AuthError("Device name is required.")
+        device_provider = provider.strip().lower() if provider and provider.strip() else None
+
+        device_id = f"device_{uuid.uuid4().hex}"
+        token = generate_token()
+        with self.connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO devices (device_id, user_id, name, provider, token_hash)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (device_id, user_id, device_name, device_provider, hash_token(token)),
+            )
+            conn.commit()
+
+        return {
+            "device_id": device_id,
+            "name": device_name,
+            "provider": device_provider,
+            "hostname": None,
+            "last_seen": None,
+            "status": "offline",
+            "metrics": {},
+            "token": token,
+        }
+
+    def list_devices(self, user_id: str) -> list[dict[str, Any]]:
+        """Return the user's devices with latest metrics and online state."""
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT device_id, name, provider, hostname, last_seen,
+                       latest_metrics, created_at,
+                       CASE
+                         WHEN last_seen IS NULL THEN NULL
+                         ELSE (julianday('now') - julianday(last_seen)) * 86400.0
+                       END AS age_seconds
+                  FROM devices
+                 WHERE user_id = ?
+                 ORDER BY created_at ASC
+                """,
+                (user_id,),
+            ).fetchall()
+
+        devices: list[dict[str, Any]] = []
+        for row in rows:
+            d = dict(row)
+            age = d.pop("age_seconds")
+            metrics_raw = d.pop("latest_metrics")
+            try:
+                d["metrics"] = json.loads(metrics_raw) if metrics_raw else {}
+            except (json.JSONDecodeError, TypeError):
+                d["metrics"] = {}
+            d["status"] = _device_status(age)
+            d["age_seconds"] = int(age) if age is not None else None
+            devices.append(d)
+        return devices
+
+    def record_heartbeat(self, token: str, metrics: dict[str, Any]) -> str | None:
+        """Update a device's latest metrics using its agent token.
+
+        Returns the device id on success, or *None* if the token is invalid.
+        Only whitelisted metric fields are persisted.
+        """
+        if not token:
+            return None
+        clean = _sanitize_metrics(metrics)
+        hostname = clean.get("hostname")
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT device_id FROM devices WHERE token_hash = ?",
+                (hash_token(token),),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                """
+                UPDATE devices
+                   SET latest_metrics = ?,
+                       hostname       = COALESCE(?, hostname),
+                       last_seen      = datetime('now')
+                 WHERE device_id = ?
+                """,
+                (
+                    json.dumps(clean, ensure_ascii=True),
+                    hostname if isinstance(hostname, str) else None,
+                    row["device_id"],
+                ),
+            )
+            conn.commit()
+            return row["device_id"]
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _device_status(age_seconds: float | None) -> str:
+    if age_seconds is None:
+        return "offline"
+    if age_seconds <= DEVICE_ONLINE_SECONDS:
+        return "online"
+    if age_seconds <= DEVICE_STALE_SECONDS:
+        return "stale"
+    return "offline"
+
+
+def _sanitize_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Keep only known metric keys with primitive (str/int/float/bool) values.
+
+    Agent heartbeats are untrusted; this prevents arbitrary nested or oversized
+    data from being persisted, and nothing here is ever executed.
+    """
+    if not isinstance(metrics, dict):
+        return {}
+    clean: dict[str, Any] = {}
+    for key in DEVICE_METRIC_KEYS:
+        if key not in metrics:
+            continue
+        value = metrics[key]
+        if isinstance(value, bool) or isinstance(value, (int, float)):
+            clean[key] = value
+        elif isinstance(value, str):
+            clean[key] = value[:200]
+    return clean
 
 
 def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:

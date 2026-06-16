@@ -72,6 +72,37 @@ interface SessionTimelineData {
   source_ip: string;
 }
 
+interface DeviceMetrics {
+  hostname?: string;
+  uptime_seconds?: number;
+  ram_used_mb?: number;
+  ram_total_mb?: number;
+  ram_percent?: number;
+  load_1m?: number;
+  cpu_count?: number;
+  disk_used_gb?: number;
+  disk_total_gb?: number;
+  disk_percent?: number;
+  local_ip?: string;
+}
+
+interface Device {
+  device_id: string;
+  name: string;
+  provider: string | null;
+  hostname: string | null;
+  last_seen: string | null;
+  status: 'online' | 'stale' | 'offline';
+  age_seconds: number | null;
+  metrics: DeviceMetrics;
+}
+
+interface NewDeviceInfo {
+  device: Device;
+  agent_token: string;
+  install_command: string;
+}
+
 interface AuthUser {
   user_id: string;
   email: string;
@@ -116,6 +147,15 @@ const Dashboard: React.FC = () => {
   const [viewingSession, setViewingSession] = useState<AttackSession | null>(null);
   const [sessionTimeline, setSessionTimeline] = useState<SessionTimelineData | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
+
+  // Devices
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [devicesMsg, setDevicesMsg] = useState<string | null>(null);
+  const [newDeviceName, setNewDeviceName] = useState('');
+  const [newDeviceProvider, setNewDeviceProvider] = useState('');
+  const [creatingDevice, setCreatingDevice] = useState(false);
+  const [createdDevice, setCreatedDevice] = useState<NewDeviceInfo | null>(null);
+  const [deviceError, setDeviceError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -169,6 +209,53 @@ const Dashboard: React.FC = () => {
       console.error('Failed to fetch sessions:', err);
     }
   }, [filterIp, sessionsMaliciousOnly]);
+
+  const fetchDevices = useCallback(async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+    try {
+      const res = await fetch('/api/devices', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDevices(data.devices || []);
+        setDevicesMsg(null);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setDevicesMsg(data.error || 'Unable to load devices.');
+      }
+    } catch (err) {
+      console.error('Failed to fetch devices:', err);
+    }
+  }, []);
+
+  const createDevice = async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token || !newDeviceName.trim()) return;
+    setCreatingDevice(true);
+    setDeviceError(null);
+    try {
+      const res = await fetch('/api/devices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: newDeviceName.trim(), provider: newDeviceProvider || null }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setCreatedDevice(data);
+        setNewDeviceName('');
+        setNewDeviceProvider('');
+        fetchDevices();
+      } else {
+        setDeviceError(data.error || 'Unable to create device.');
+      }
+    } catch (err) {
+      console.error('Failed to create device:', err);
+      setDeviceError('Unable to create device.');
+    }
+    setCreatingDevice(false);
+  };
 
   const fetchSessionTimeline = async (session: AttackSession) => {
     setTimelineLoading(true);
@@ -243,6 +330,17 @@ const Dashboard: React.FC = () => {
     }
   }, [activeNav, fetchSessions]);
 
+  useEffect(() => {
+    if (activeNav === 'devices') {
+      const timeout = window.setTimeout(fetchDevices, 0);
+      const interval = setInterval(fetchDevices, REFRESH_INTERVAL);
+      return () => {
+        window.clearTimeout(timeout);
+        clearInterval(interval);
+      };
+    }
+  }, [activeNav, fetchDevices]);
+
   const stats = [
     { label: 'Total Events', value: summary?.total_events ?? 0 },
     { label: 'Unique IPs', value: summary?.unique_source_ips ?? 0 },
@@ -273,6 +371,16 @@ const Dashboard: React.FC = () => {
     } catch {
       return ts;
     }
+  };
+
+  const formatUptime = (seconds?: number) => {
+    if (!seconds || seconds < 0) return '-';
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${mins}m`;
   };
 
   const resetFilters = () => {
@@ -310,6 +418,7 @@ const Dashboard: React.FC = () => {
           <a href="#" className={activeNav === 'events' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('events'); closeTimeline(); }}>Events</a>
           <a href="#" className={activeNav === 'sessions' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('sessions'); closeTimeline(); }}>Sessions</a>
           <a href="#" className={activeNav === 'intelligence' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('intelligence'); closeTimeline(); }}>Intelligence</a>
+          <a href="#" className={activeNav === 'devices' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('devices'); closeTimeline(); }}>Devices</a>
           <a href="/api/exports/blocklist.txt" target="_blank" rel="noopener noreferrer">↓ Blocklist</a>
           <a href="/api/exports/report.md" target="_blank" rel="noopener noreferrer">↓ Report</a>
         </nav>
@@ -353,7 +462,7 @@ const Dashboard: React.FC = () => {
 
         <section className="dashboard-content">
           {/* Stats Row — shown on overview, events, sessions */}
-          {activeNav !== 'intelligence' && !viewingSession && (
+          {activeNav !== 'intelligence' && activeNav !== 'devices' && !viewingSession && (
             <div className="stats-grid">
               {stats.map((stat, i) => (
                 <div key={i} className="stat-card">
@@ -625,8 +734,120 @@ const Dashboard: React.FC = () => {
             </div>
           )}
 
+          {/* ── Devices View ──────────────────────────────────────── */}
+          {activeNav === 'devices' && !viewingSession && (
+            <div className="devices-view">
+              <div className="device-install-panel">
+                <div className="panel-header"><h3>Enroll a Device</h3></div>
+                <div className="device-install-form">
+                  <input
+                    type="text"
+                    placeholder="Device name (e.g. edge-vm)"
+                    value={newDeviceName}
+                    onChange={(e) => setNewDeviceName(e.target.value)}
+                  />
+                  <select value={newDeviceProvider} onChange={(e) => setNewDeviceProvider(e.target.value)}>
+                    <option value="">Provider (optional)</option>
+                    <option value="aws">AWS</option>
+                    <option value="azure">Azure</option>
+                    <option value="google_cloud">Google Cloud</option>
+                    <option value="digitalocean">DigitalOcean</option>
+                    <option value="cloudflare">Cloudflare</option>
+                    <option value="local_server">Local Server</option>
+                    <option value="other">Other</option>
+                  </select>
+                  <button
+                    className="reset-btn"
+                    onClick={createDevice}
+                    disabled={creatingDevice || !newDeviceName.trim()}
+                  >
+                    {creatingDevice ? 'Creating…' : 'Create device'}
+                  </button>
+                </div>
+                {deviceError && <p className="text-red" style={{ marginTop: 8 }}>{deviceError}</p>}
+                {createdDevice && (
+                  <div className="device-token-box">
+                    <p>
+                      <strong>Device created.</strong> Copy this install command now —
+                      the agent token is shown only once.
+                    </p>
+                    <code className="install-command">{createdDevice.install_command}</code>
+                    <button
+                      className="reset-btn"
+                      onClick={() => navigator.clipboard?.writeText(createdDevice.install_command)}
+                    >
+                      Copy command
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {devicesMsg ? (
+                <div className="empty-state"><p>{devicesMsg}</p></div>
+              ) : devices.length === 0 ? (
+                <div className="empty-state">
+                  <p>No devices registered yet.</p>
+                  <p style={{ marginTop: 8, fontSize: '0.85rem' }}>
+                    Enroll a device above, then run the generated agent command on that machine.
+                  </p>
+                </div>
+              ) : (
+                <div className={`device-grid${devices.length === 1 ? ' single' : ''}`}>
+                  {devices.map((device) => (
+                    <div key={device.device_id} className="device-card">
+                      <div className="device-card-header">
+                        <div>
+                          <h4>{device.metrics.hostname || device.name}</h4>
+                          <span className="text-muted">{device.name}</span>
+                        </div>
+                        <span className={`device-status ${device.status}`}>{device.status}</span>
+                      </div>
+                      <div className="device-meta">
+                        <span>{device.metrics.local_ip || '—'}</span>
+                        <span>{device.provider ? device.provider.replace(/_/g, ' ') : 'unknown'}</span>
+                      </div>
+                      <div className="device-metrics">
+                        <div className="device-metric">
+                          <span className="metric-label">Uptime</span>
+                          <span className="metric-value">{formatUptime(device.metrics.uptime_seconds)}</span>
+                        </div>
+                        <div className="device-metric">
+                          <span className="metric-label">RAM</span>
+                          <span className="metric-value">
+                            {device.metrics.ram_percent != null
+                              ? `${device.metrics.ram_percent}% (${device.metrics.ram_used_mb}/${device.metrics.ram_total_mb} MB)`
+                              : '—'}
+                          </span>
+                        </div>
+                        <div className="device-metric">
+                          <span className="metric-label">CPU load</span>
+                          <span className="metric-value">
+                            {device.metrics.load_1m != null
+                              ? `${device.metrics.load_1m}${device.metrics.cpu_count ? ` / ${device.metrics.cpu_count} cores` : ''}`
+                              : '—'}
+                          </span>
+                        </div>
+                        <div className="device-metric">
+                          <span className="metric-label">Disk</span>
+                          <span className="metric-value">
+                            {device.metrics.disk_percent != null
+                              ? `${device.metrics.disk_percent}% (${device.metrics.disk_used_gb}/${device.metrics.disk_total_gb} GB)`
+                              : '—'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="device-footer text-muted">
+                        Last seen: {formatDateTime(device.last_seen)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ── Overview / Events (existing views) ────────────────── */}
-          {activeNav !== 'sessions' && activeNav !== 'intelligence' && !viewingSession && (
+          {activeNav !== 'sessions' && activeNav !== 'intelligence' && activeNav !== 'devices' && !viewingSession && (
             <div className="content-grid">
               <div className="event-log-panel">
                 <div className="panel-header">

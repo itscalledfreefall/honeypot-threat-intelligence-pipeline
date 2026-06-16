@@ -143,10 +143,33 @@ The pipeline currently supports:
 5. persistent SQLite storage with 60-second deduplication window
 6. attack session tracking with timeline views
 7. read-only Flask JSON API backend
-8. React dashboard with Overview, Events, Sessions, and Timeline tabs
+8. React dashboard with Overview, Events, Sessions, Timeline, and Devices tabs
 9. exportable blocklists, malicious record exports, and markdown reports
 10. automated iptables firewall blocking with dry-run safety and shell script generation
 11. Docker-based Cowrie lab environment with a helper script for live demos
+
+## Device Monitoring
+
+The **Devices** tab lists the machines where the honeypot service runs and shows
+their live health (uptime, RAM, CPU load, disk, hostname/IP) based on agent
+heartbeats. With one device it shows a single card; with several it becomes a grid.
+
+Enroll a device from the Devices tab. This returns a one-time agent token and an
+install command — the token is shown only once and is stored hashed. Then run the
+lightweight agent on the target Linux machine:
+
+```bash
+# Reports every 30s (Ctrl-C to stop)
+python3 scripts/device-agent.py --api-url http://<dashboard-host>:5000 --token <agent-token>
+
+# Or a single heartbeat
+python3 scripts/device-agent.py --api-url http://<dashboard-host>:5000 --token <agent-token> --once
+```
+
+The agent uses only safe local reads (`/proc`, `shutil`, `socket`) — it runs no
+shell commands and posts nothing attacker-controlled. A device is **online** when
+seen within 60s, **stale** within 10 minutes, and **offline** after that. The agent
+token authorizes heartbeats only — it is not a user login token.
 
 ## Automated Firewall Response
 

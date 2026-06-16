@@ -230,6 +230,75 @@ def create_app(
             return jsonify({"error": "Reset token is invalid or expired."}), 400
         return jsonify({"ok": True})
 
+    # ── Devices ─────────────────────────────────────────────────────────
+
+    @app.route("/api/devices", methods=["POST"])
+    def api_devices_create():
+        db = _auth_db()
+        if db is None:
+            return _auth_unavailable()
+
+        user = db.get_user_by_session_token(_bearer_token())
+        if user is None:
+            db.close()
+            return jsonify({"error": "Authentication required."}), 401
+
+        payload = _request_json()
+        try:
+            device = db.create_device(
+                user_id=user["user_id"],
+                name=str(payload.get("name", "")),
+                provider=payload.get("provider"),
+            )
+        except AuthError as exc:
+            db.close()
+            return jsonify({"error": str(exc)}), 400
+        db.close()
+
+        token = device.pop("token")
+        base_url = request.host_url.rstrip("/")
+        install_command = (
+            f"python3 device-agent.py --api-url {base_url} --token {token}"
+        )
+        return jsonify({
+            "device": device,
+            "agent_token": token,
+            "install_command": install_command,
+        }), 201
+
+    @app.route("/api/devices")
+    def api_devices_list():
+        db = _auth_db()
+        if db is None:
+            return _auth_unavailable()
+
+        user = db.get_user_by_session_token(_bearer_token())
+        if user is None:
+            db.close()
+            return jsonify({"error": "Authentication required."}), 401
+
+        devices = db.list_devices(user["user_id"])
+        db.close()
+        return jsonify({"devices": devices})
+
+    @app.route("/api/devices/heartbeat", methods=["POST"])
+    def api_devices_heartbeat():
+        db = _auth_db()
+        if db is None:
+            return _auth_unavailable()
+
+        payload = _request_json()
+        token = _bearer_token() or str(payload.get("token", ""))
+        metrics = payload.get("metrics")
+        device_id = db.record_heartbeat(
+            token,
+            metrics if isinstance(metrics, dict) else {},
+        )
+        db.close()
+        if device_id is None:
+            return jsonify({"error": "Invalid device token."}), 401
+        return jsonify({"ok": True, "device_id": device_id})
+
     @app.route("/api/summary")
     def api_summary():
         if _has_db():
