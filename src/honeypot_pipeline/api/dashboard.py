@@ -258,13 +258,28 @@ def create_app(
         token = device.pop("token")
         base_url = request.host_url.rstrip("/")
         install_command = (
-            f"python3 scripts/device-agent.py --api-url {base_url} --token {token}"
+            f"curl -fsSL {base_url}/api/devices/agent.py -o device-agent.py && "
+            f"python3 device-agent.py --api-url {base_url} --token {token}"
         )
         return jsonify({
             "device": device,
             "agent_token": token,
             "install_command": install_command,
         }), 201
+
+    @app.route("/api/devices/agent.py")
+    def api_devices_agent_script():
+        agent_path = (
+            Path(__file__).resolve().parents[3] / "scripts" / "device-agent.py"
+        )
+        if not agent_path.exists():
+            abort(404)
+        return send_file(
+            agent_path,
+            mimetype="text/x-python; charset=utf-8",
+            as_attachment=False,
+            download_name="device-agent.py",
+        )
 
     @app.route("/api/devices")
     def api_devices_list():

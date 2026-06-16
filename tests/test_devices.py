@@ -171,6 +171,17 @@ class DeviceAPITests(unittest.TestCase):
         self.assertEqual(listing["devices"][0]["status"], "online")
         self.assertEqual(listing["devices"][0]["metrics"]["ram_percent"], 42.0)
 
+    def test_install_command_downloads_agent(self) -> None:
+        create = self.client.post(
+            "/api/devices", json={"name": "edge-vm"}, headers=self._auth()
+        )
+        self.assertIn("/api/devices/agent.py", create.get_json()["install_command"])
+
+    def test_agent_script_is_served(self) -> None:
+        resp = self.client.get("/api/devices/agent.py")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(b"collect_metrics", resp.data)
+
     def test_heartbeat_with_invalid_token_is_rejected(self) -> None:
         beat = self.client.post(
             "/api/devices/heartbeat",

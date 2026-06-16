@@ -806,8 +806,8 @@ const Dashboard: React.FC = () => {
                     <div className="device-run-steps">
                       <p><strong>Then, on the device you want to monitor:</strong></p>
                       <ol>
-                        <li>Make sure Python 3 is installed and you have this repo (or just the <code>scripts/device-agent.py</code> file).</li>
-                        <li>Run the command above from the repo root. It reports every 30s; leave it running (or use <code>--once</code> for a single heartbeat).</li>
+                        <li>Make sure Python 3 and <code>curl</code> are installed.</li>
+                        <li>Paste the command above into a terminal (any directory). It downloads the agent and starts reporting every 30s — leave it running.</li>
                         <li>The device appears below as <span className="device-status online">online</span> within a few seconds.</li>
                       </ol>
                     </div>

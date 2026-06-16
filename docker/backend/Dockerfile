@@ -12,6 +12,9 @@ COPY pyproject.toml README.md ./
 COPY src/ ./src/
 RUN pip install --no-cache-dir -e .
 
+# Device agent script, served to enrolled devices via /api/devices/agent.py
+COPY scripts/device-agent.py ./scripts/device-agent.py
+
 # Entrypoint
 COPY docker/backend/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
