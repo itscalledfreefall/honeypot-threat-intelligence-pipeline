@@ -1,0 +1,6 @@
+services:
+  backend:
+    image: ${GHCR_IMAGE_PREFIX}/backend:${IMAGE_TAG}
+
+  frontend:
+    image: ${GHCR_IMAGE_PREFIX}/frontend:${IMAGE_TAG}
