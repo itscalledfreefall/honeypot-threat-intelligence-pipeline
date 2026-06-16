@@ -156,6 +156,7 @@ const Dashboard: React.FC = () => {
   const [creatingDevice, setCreatingDevice] = useState(false);
   const [createdDevice, setCreatedDevice] = useState<NewDeviceInfo | null>(null);
   const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -244,6 +245,7 @@ const Dashboard: React.FC = () => {
       const data = await res.json();
       if (res.ok) {
         setCreatedDevice(data);
+        setCopied(false);
         setNewDeviceName('');
         setNewDeviceProvider('');
         fetchDevices();
@@ -255,6 +257,29 @@ const Dashboard: React.FC = () => {
       setDeviceError('Unable to create device.');
     }
     setCreatingDevice(false);
+  };
+
+  const copyCommand = async (text: string) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for non-secure contexts (plain HTTP over LAN IP).
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Copy failed:', err);
+    }
   };
 
   const fetchSessionTimeline = async (session: AttackSession) => {
@@ -768,16 +793,24 @@ const Dashboard: React.FC = () => {
                 {createdDevice && (
                   <div className="device-token-box">
                     <p>
-                      <strong>Device created.</strong> Copy this install command now —
-                      the agent token is shown only once.
+                      <strong>Device "{createdDevice.device.name}" created.</strong> Copy this
+                      install command now — the agent token is shown only once.
                     </p>
                     <code className="install-command">{createdDevice.install_command}</code>
                     <button
                       className="reset-btn"
-                      onClick={() => navigator.clipboard?.writeText(createdDevice.install_command)}
+                      onClick={() => copyCommand(createdDevice.install_command)}
                     >
-                      Copy command
+                      {copied ? '✓ Copied' : 'Copy command'}
                     </button>
+                    <div className="device-run-steps">
+                      <p><strong>Then, on the device you want to monitor:</strong></p>
+                      <ol>
+                        <li>Make sure Python 3 is installed and you have this repo (or just the <code>scripts/device-agent.py</code> file).</li>
+                        <li>Run the command above from the repo root. It reports every 30s; leave it running (or use <code>--once</code> for a single heartbeat).</li>
+                        <li>The device appears below as <span className="device-status online">online</span> within a few seconds.</li>
+                      </ol>
+                    </div>
                   </div>
                 )}
               </div>
