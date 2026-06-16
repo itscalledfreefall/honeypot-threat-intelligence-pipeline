@@ -97,6 +97,7 @@
 
 .input-group select {
   cursor: pointer;
+  color-scheme: dark;
 }
 
 .input-group input:focus,

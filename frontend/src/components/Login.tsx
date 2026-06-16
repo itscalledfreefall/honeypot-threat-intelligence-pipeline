@@ -12,7 +12,7 @@ interface AuthResponse {
     user_id: string;
     email: string;
     first_name: string;
-    middle_name?: string | null;
+    last_name?: string | null;
     cloud_provider: string;
   };
   error?: string;
@@ -33,7 +33,7 @@ const cloudOptions = [
 const Login: React.FC = () => {
   const [mode, setMode] = useState<AuthMode>('login');
   const [firstName, setFirstName] = useState('');
-  const [middleName, setMiddleName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [cloudProvider, setCloudProvider] = useState('aws');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -79,7 +79,7 @@ const Login: React.FC = () => {
       if (mode === 'register') {
         const data = await requestJson('/api/auth/register', {
           first_name: firstName,
-          middle_name: middleName || null,
+          middle_name: lastName || null,
           cloud_provider: cloudProvider,
           email,
           password,
@@ -162,19 +162,19 @@ const Login: React.FC = () => {
                   <label>First Name</label>
                   <input
                     type="text"
-                    placeholder="Ata"
+                    placeholder="John"
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
                     required
                   />
                 </div>
                 <div className="input-group">
-                  <label>Middle Name</label>
+                  <label>Last Name</label>
                   <input
                     type="text"
-                    placeholder="Optional"
-                    value={middleName}
-                    onChange={(e) => setMiddleName(e.target.value)}
+                    placeholder="Smith"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
                   />
                 </div>
               </div>

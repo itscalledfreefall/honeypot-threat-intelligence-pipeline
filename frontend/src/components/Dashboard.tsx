@@ -76,7 +76,7 @@ interface AuthUser {
   user_id: string;
   email: string;
   first_name: string;
-  middle_name?: string | null;
+  last_name?: string | null;
   cloud_provider: string;
 }
 
