@@ -433,12 +433,12 @@ const Dashboard: React.FC = () => {
     from: 'now-24h',
     to: 'now',
     theme: 'dark',
-    kiosk: 'tv',
   });
   if (authUser?.user_id) {
     grafanaParams.append('var-user_id', authUser.user_id);
   }
-  const grafanaEmbedUrl = `${grafanaBaseUrl}${grafanaPath}?${grafanaParams.toString()}`;
+  // Grafana 11+ uses a bare `&kiosk` flag (the old `kiosk=tv` value was removed).
+  const grafanaEmbedUrl = `${grafanaBaseUrl}${grafanaPath}?${grafanaParams.toString()}&kiosk`;
   const grafanaDashboardUrl = grafanaEmbedUrl;
 
   const resetFilters = () => {
