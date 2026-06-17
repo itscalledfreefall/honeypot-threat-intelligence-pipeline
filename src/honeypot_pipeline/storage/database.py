@@ -1071,6 +1071,16 @@ class Database:
             devices.append(d)
         return devices
 
+    def delete_device(self, user_id: str, device_id: str) -> bool:
+        """Delete a device owned by *user_id*.  Returns True if a row was removed."""
+        with self.connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM devices WHERE device_id = ? AND user_id = ?",
+                (device_id, user_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def record_heartbeat(self, token: str, metrics: dict[str, Any]) -> str | None:
         """Update a device's latest metrics using its agent token.
 

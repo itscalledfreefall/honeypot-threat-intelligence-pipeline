@@ -296,6 +296,23 @@ def create_app(
         db.close()
         return jsonify({"devices": devices})
 
+    @app.route("/api/devices/<device_id>", methods=["DELETE"])
+    def api_devices_delete(device_id: str):
+        db = _auth_db()
+        if db is None:
+            return _auth_unavailable()
+
+        user = db.get_user_by_session_token(_bearer_token())
+        if user is None:
+            db.close()
+            return jsonify({"error": "Authentication required."}), 401
+
+        removed = db.delete_device(user["user_id"], device_id)
+        db.close()
+        if not removed:
+            return jsonify({"error": "Device not found."}), 404
+        return jsonify({"ok": True})
+
     @app.route("/api/devices/heartbeat", methods=["POST"])
     def api_devices_heartbeat():
         db = _auth_db()

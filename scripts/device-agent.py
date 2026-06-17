@@ -169,12 +169,25 @@ def main() -> int:
         print("error: --api-url and --token are required")
         return 2
 
+    interval = max(args.interval, 5)
+    if not args.once:
+        print(
+            f"Reporting to {args.api_url} every {interval}s. Press Ctrl-C to stop."
+        )
+
     while True:
         metrics = collect_metrics()
         ok = send_heartbeat(args.api_url, args.token, metrics)
+        if ok:
+            stamp = time.strftime("%H:%M:%S")
+            print(f"[{stamp}] heartbeat sent ({metrics.get('hostname', 'unknown')})")
         if args.once:
             return 0 if ok else 1
-        time.sleep(max(args.interval, 5))
+        try:
+            time.sleep(interval)
+        except KeyboardInterrupt:
+            print("\nStopped.")
+            return 0
 
 
 if __name__ == "__main__":

@@ -168,9 +168,11 @@ curl -fsSL http://<dashboard-host>:5173/api/devices/agent.py -o device-agent.py 
 ```
 
 The agent uses only safe local reads (`/proc`, `shutil`, `socket`) — it runs no
-shell commands and posts nothing attacker-controlled. A device is **online** when
+shell commands and posts nothing attacker-controlled. It reports continuously
+(logging each heartbeat) until stopped with Ctrl-C. A device is **online** when
 seen within 60s, **stale** within 10 minutes, and **offline** after that. The agent
-token authorizes heartbeats only — it is not a user login token.
+token authorizes heartbeats only — it is not a user login token. Devices can be
+removed from the Devices tab via the **Remove** button on each card.
 
 ## Automated Firewall Response
 

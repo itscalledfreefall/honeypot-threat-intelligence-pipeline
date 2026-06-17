@@ -100,6 +100,20 @@ class DeviceDatabaseTests(unittest.TestCase):
             conn.commit()
         self.assertEqual(self.db.list_devices(self.user["user_id"])[0]["status"], "offline")
 
+    def test_delete_device_is_scoped_to_owner(self) -> None:
+        other = self.db.create_user(
+            email="other@example.com",
+            password="strong-password",
+            first_name="Other",
+            middle_name=None,
+            cloud_provider="aws",
+        )
+        device = self.db.create_device(user_id=self.user["user_id"], name="mine", provider=None)
+        # another user cannot delete it
+        self.assertFalse(self.db.delete_device(other["user_id"], device["device_id"]))
+        # owner can
+        self.assertTrue(self.db.delete_device(self.user["user_id"], device["device_id"]))
+
     def test_devices_are_scoped_to_user(self) -> None:
         other = self.db.create_user(
             email="other@example.com",
@@ -181,6 +195,27 @@ class DeviceAPITests(unittest.TestCase):
         resp = self.client.get("/api/devices/agent.py")
         self.assertEqual(resp.status_code, 200)
         self.assertIn(b"collect_metrics", resp.data)
+
+    def test_user_can_delete_own_device(self) -> None:
+        create = self.client.post(
+            "/api/devices", json={"name": "edge-vm"}, headers=self._auth()
+        )
+        device_id = create.get_json()["device"]["device_id"]
+
+        deleted = self.client.delete(f"/api/devices/{device_id}", headers=self._auth())
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(self.client.get("/api/devices", headers=self._auth()).get_json()["devices"], [])
+
+        # second delete now 404s
+        again = self.client.delete(f"/api/devices/{device_id}", headers=self._auth())
+        self.assertEqual(again.status_code, 404)
+
+    def test_delete_device_requires_auth(self) -> None:
+        create = self.client.post(
+            "/api/devices", json={"name": "edge-vm"}, headers=self._auth()
+        )
+        device_id = create.get_json()["device"]["device_id"]
+        self.assertEqual(self.client.delete(f"/api/devices/{device_id}").status_code, 401)
 
     def test_heartbeat_with_invalid_token_is_rejected(self) -> None:
         beat = self.client.post(

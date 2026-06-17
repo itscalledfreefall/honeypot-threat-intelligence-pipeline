@@ -760,4 +760,24 @@
   font-size: 0.75rem;
   border-top: 1px solid var(--border-color);
   padding-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.device-remove-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  padding: 4px 12px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.device-remove-btn:hover {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
 }

@@ -259,6 +259,23 @@ const Dashboard: React.FC = () => {
     setCreatingDevice(false);
   };
 
+  const deleteDevice = async (device: Device) => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+    if (!window.confirm(`Remove device "${device.metrics.hostname || device.name}"?`)) return;
+    try {
+      const res = await fetch(`/api/devices/${encodeURIComponent(device.device_id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setDevices((prev) => prev.filter((d) => d.device_id !== device.device_id));
+      }
+    } catch (err) {
+      console.error('Failed to delete device:', err);
+    }
+  };
+
   const copyCommand = async (text: string) => {
     try {
       if (navigator.clipboard && window.isSecureContext) {
@@ -869,8 +886,11 @@ const Dashboard: React.FC = () => {
                           </span>
                         </div>
                       </div>
-                      <div className="device-footer text-muted">
-                        Last seen: {formatDateTime(device.last_seen)}
+                      <div className="device-footer">
+                        <span className="text-muted">Last seen: {formatDateTime(device.last_seen)}</span>
+                        <button className="device-remove-btn" onClick={() => deleteDevice(device)}>
+                          Remove
+                        </button>
                       </div>
                     </div>
                   ))}
