@@ -201,6 +201,16 @@ MIGRATIONS: list[tuple[str, str]] = [
 
 DEDUP_WINDOW_SECONDS = 60
 
+TABLE_DDL_STATEMENTS = [
+    stmt for stmt in DDL_STATEMENTS
+    if stmt.lstrip().upper().startswith("CREATE TABLE")
+]
+
+INDEX_DDL_STATEMENTS = [
+    stmt for stmt in DDL_STATEMENTS
+    if not stmt.lstrip().upper().startswith("CREATE TABLE")
+]
+
 # Device heartbeat freshness thresholds (seconds).
 DEVICE_ONLINE_SECONDS = 60
 DEVICE_STALE_SECONDS = 600
@@ -256,10 +266,12 @@ class Database:
     def initialize(self) -> None:
         """Create tables and indexes if they do not exist."""
         with self.connection() as conn:
-            for stmt in DDL_STATEMENTS:
+            for stmt in TABLE_DDL_STATEMENTS:
                 conn.execute(stmt)
             self._apply_migrations(conn)
             self._ensure_columns(conn)
+            for stmt in INDEX_DDL_STATEMENTS:
+                conn.execute(stmt)
             conn.commit()
 
     def _apply_migrations(self, conn: sqlite3.Connection) -> None:
@@ -1055,6 +1067,36 @@ class Database:
                  ORDER BY created_at ASC
                 """,
                 (user_id,),
+            ).fetchall()
+
+        devices: list[dict[str, Any]] = []
+        for row in rows:
+            d = dict(row)
+            age = d.pop("age_seconds")
+            metrics_raw = d.pop("latest_metrics")
+            try:
+                d["metrics"] = json.loads(metrics_raw) if metrics_raw else {}
+            except (json.JSONDecodeError, TypeError):
+                d["metrics"] = {}
+            d["status"] = _device_status(age)
+            d["age_seconds"] = int(age) if age is not None else None
+            devices.append(d)
+        return devices
+
+    def list_all_devices(self) -> list[dict[str, Any]]:
+        """Return every device with owner id for metrics export."""
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_id, device_id, name, provider, hostname, last_seen,
+                       latest_metrics, created_at,
+                       CASE
+                         WHEN last_seen IS NULL THEN NULL
+                         ELSE (julianday('now') - julianday(last_seen)) * 86400.0
+                       END AS age_seconds
+                  FROM devices
+                 ORDER BY created_at ASC
+                """
             ).fetchall()
 
         devices: list[dict[str, Any]] = []

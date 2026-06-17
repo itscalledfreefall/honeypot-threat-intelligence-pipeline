@@ -143,10 +143,11 @@ The pipeline currently supports:
 5. persistent SQLite storage with 60-second deduplication window
 6. attack session tracking with timeline views
 7. read-only Flask JSON API backend
-8. React dashboard with Overview, Events, Sessions, Timeline, and Devices tabs
+8. React dashboard with Overview, Events, Sessions, Timeline, Devices, and Monitoring tabs
 9. exportable blocklists, malicious record exports, and markdown reports
 10. automated iptables firewall blocking with dry-run safety and shell script generation
 11. Docker-based Cowrie lab environment with a helper script for live demos
+12. Prometheus + Grafana monitoring for historical device and attack graphs
 
 ## Device Monitoring
 
@@ -173,6 +174,29 @@ shell commands and posts nothing attacker-controlled. It reports continuously
 seen within 60s, **stale** within 10 minutes, and **offline** after that. The agent
 token authorizes heartbeats only — it is not a user login token. Devices can be
 removed from the Devices tab via the **Remove** button on each card.
+
+## Grafana Monitoring
+
+The **Monitoring** tab embeds Grafana for historical graphs while the React
+dashboard remains the source of truth for user login, device enrollment, and
+current device state.
+
+Docker Compose now starts:
+
+- Grafana at `http://localhost:3000`
+- Prometheus at `http://localhost:9090`
+
+Prometheus scrapes the backend `/metrics` endpoint every 15 seconds. Grafana is
+provisioned automatically with a `Honeypot Monitoring` dashboard showing:
+
+- online and stale device counts
+- RAM, disk, CPU load, uptime, and last-seen age over time
+- event volume, malicious event volume, and unique attacker IPs
+- attack category, protocol, and risk-level breakdowns
+
+The embedded Grafana dashboard defaults to the logged-in user's `user_id` as a
+dashboard variable. This is a display filter only; device ownership remains
+enforced by the Flask API and React app.
 
 ## Automated Firewall Response
 

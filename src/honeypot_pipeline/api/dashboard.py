@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from collections import Counter
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, abort, jsonify, request, send_file
+from flask import Flask, Response, abort, jsonify, request, send_file
 from flask_cors import CORS
 
 from ..auth import AuthError, CLOUD_PROVIDERS
@@ -51,6 +52,35 @@ def _sorted_category_options(records: list[dict[str, Any]]) -> list[str]:
             if isinstance(category, str) and category:
                 values.add(category)
     return sorted(values)
+
+
+def _prometheus_label(value: str | None) -> str:
+    text = "" if value is None else str(value)
+    return text.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def _prometheus_line(
+    name: str,
+    value: int | float,
+    labels: dict[str, str | None] | None = None,
+) -> str:
+    if labels:
+        encoded = ",".join(
+            f'{key}="{_prometheus_label(label_value)}"'
+            for key, label_value in sorted(labels.items())
+        )
+        return f"{name}{{{encoded}}} {value}"
+    return f"{name} {value}"
+
+
+def _coerce_metric_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        return float(value)
+    return None
 
 
 def create_app(
@@ -330,6 +360,131 @@ def create_app(
         if device_id is None:
             return jsonify({"error": "Invalid device token."}), 401
         return jsonify({"ok": True, "device_id": device_id})
+
+    @app.route("/metrics")
+    def api_metrics():
+        lines = [
+            "# HELP honeypot_events_total Total honeypot events processed.",
+            "# TYPE honeypot_events_total gauge",
+            "# HELP honeypot_malicious_events_total Total malicious honeypot events.",
+            "# TYPE honeypot_malicious_events_total gauge",
+            "# HELP honeypot_unique_source_ips Unique attacker IP addresses observed.",
+            "# TYPE honeypot_unique_source_ips gauge",
+            "# HELP honeypot_blocklist_count Count of IPs eligible for blocklisting.",
+            "# TYPE honeypot_blocklist_count gauge",
+            "# HELP honeypot_attack_category_total Event totals by attack category.",
+            "# TYPE honeypot_attack_category_total gauge",
+            "# HELP honeypot_protocol_total Event totals by network protocol.",
+            "# TYPE honeypot_protocol_total gauge",
+            "# HELP honeypot_risk_level_total Event totals by risk level.",
+            "# TYPE honeypot_risk_level_total gauge",
+            "# HELP honeypot_device_online Device online state, 1 when online.",
+            "# TYPE honeypot_device_online gauge",
+            "# HELP honeypot_device_stale Device stale state, 1 when stale.",
+            "# TYPE honeypot_device_stale gauge",
+            "# HELP honeypot_device_ram_usage_percent Device RAM usage percentage.",
+            "# TYPE honeypot_device_ram_usage_percent gauge",
+            "# HELP honeypot_device_disk_usage_percent Device disk usage percentage.",
+            "# TYPE honeypot_device_disk_usage_percent gauge",
+            "# HELP honeypot_device_load_1m Device one-minute load average.",
+            "# TYPE honeypot_device_load_1m gauge",
+            "# HELP honeypot_device_uptime_seconds Device uptime in seconds.",
+            "# TYPE honeypot_device_uptime_seconds gauge",
+            "# HELP honeypot_device_last_seen_age_seconds Seconds since the last heartbeat.",
+            "# TYPE honeypot_device_last_seen_age_seconds gauge",
+        ]
+
+        if _has_db():
+            db = _get_db()
+            summary = db.get_summary()
+            devices = db.list_all_devices()
+            db.close()
+        else:
+            dataset = get_dataset()
+            summary = {
+                "total_events": dataset.summary.get("total_events", 0),
+                "unique_source_ips": dataset.summary.get("unique_source_ips", 0),
+                "malicious_event_count": len(get_malicious_records(dataset.records)),
+                "blocklist_count": len(collect_blocklist_ips(dataset.records)),
+                "by_attack_category": dataset.summary.get("by_attack_category", {}),
+                "by_protocol": dataset.summary.get("by_protocol", {}),
+                "by_risk_level": dataset.summary.get("by_risk_level", {}),
+            }
+            devices = []
+
+        lines.append(_prometheus_line("honeypot_events_total", int(summary.get("total_events", 0))))
+        lines.append(
+            _prometheus_line(
+                "honeypot_malicious_events_total",
+                int(summary.get("malicious_event_count", 0)),
+            )
+        )
+        lines.append(
+            _prometheus_line(
+                "honeypot_unique_source_ips",
+                int(summary.get("unique_source_ips", 0)),
+            )
+        )
+        lines.append(
+            _prometheus_line(
+                "honeypot_blocklist_count",
+                int(summary.get("blocklist_count", 0)),
+            )
+        )
+
+        for category, count in sorted((summary.get("by_attack_category") or {}).items()):
+            lines.append(
+                _prometheus_line(
+                    "honeypot_attack_category_total",
+                    int(count),
+                    {"category": category},
+                )
+            )
+        for protocol, count in sorted((summary.get("by_protocol") or {}).items()):
+            lines.append(
+                _prometheus_line(
+                    "honeypot_protocol_total",
+                    int(count),
+                    {"protocol": protocol},
+                )
+            )
+        for risk_level, count in sorted((summary.get("by_risk_level") or {}).items()):
+            lines.append(
+                _prometheus_line(
+                    "honeypot_risk_level_total",
+                    int(count),
+                    {"risk_level": risk_level},
+                )
+            )
+
+        for device in devices:
+            labels = {
+                "user_id": str(device.get("user_id") or ""),
+                "device_id": str(device.get("device_id") or ""),
+                "provider": str(device.get("provider") or "unknown"),
+            }
+            status = str(device.get("status") or "offline")
+            age_seconds = device.get("age_seconds")
+            age_value = _coerce_metric_number(age_seconds)
+            metrics = device.get("metrics") if isinstance(device.get("metrics"), dict) else {}
+
+            lines.append(_prometheus_line("honeypot_device_online", 1 if status == "online" else 0, labels))
+            lines.append(_prometheus_line("honeypot_device_stale", 1 if status == "stale" else 0, labels))
+            if age_value is not None:
+                lines.append(_prometheus_line("honeypot_device_last_seen_age_seconds", age_value, labels))
+
+            for metric_name, source_key in (
+                ("honeypot_device_ram_usage_percent", "ram_percent"),
+                ("honeypot_device_disk_usage_percent", "disk_percent"),
+                ("honeypot_device_load_1m", "load_1m"),
+                ("honeypot_device_uptime_seconds", "uptime_seconds"),
+            ):
+                metric_value = _coerce_metric_number(metrics.get(source_key))
+                if metric_value is not None:
+                    lines.append(_prometheus_line(metric_name, metric_value, labels))
+
+        payload = "\n".join(lines) + "\n"
+        return Response(payload, mimetype="text/plain; version=0.0.4; charset=utf-8")
 
     @app.route("/api/summary")
     def api_summary():

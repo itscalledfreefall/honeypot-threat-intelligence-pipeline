@@ -112,6 +112,7 @@ interface AuthUser {
 }
 
 const REFRESH_INTERVAL = 3000;
+const GRAFANA_DASHBOARD_UID = 'honeypot-monitoring';
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -425,6 +426,21 @@ const Dashboard: React.FC = () => {
     return `${mins}m`;
   };
 
+  const grafanaBaseUrl = `${window.location.protocol}//${window.location.hostname}:3000`;
+  const grafanaPath = `/d/${GRAFANA_DASHBOARD_UID}/honeypot-monitoring`;
+  const grafanaParams = new URLSearchParams({
+    orgId: '1',
+    from: 'now-24h',
+    to: 'now',
+    theme: 'dark',
+    kiosk: 'tv',
+  });
+  if (authUser?.user_id) {
+    grafanaParams.append('var-user_id', authUser.user_id);
+  }
+  const grafanaEmbedUrl = `${grafanaBaseUrl}${grafanaPath}?${grafanaParams.toString()}`;
+  const grafanaDashboardUrl = grafanaEmbedUrl;
+
   const resetFilters = () => {
     setFilterIp('');
     setFilterEventType('');
@@ -461,6 +477,7 @@ const Dashboard: React.FC = () => {
           <a href="#" className={activeNav === 'sessions' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('sessions'); closeTimeline(); }}>Sessions</a>
           <a href="#" className={activeNav === 'intelligence' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('intelligence'); closeTimeline(); }}>Intelligence</a>
           <a href="#" className={activeNav === 'devices' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('devices'); closeTimeline(); }}>Devices</a>
+          <a href="#" className={activeNav === 'monitoring' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('monitoring'); closeTimeline(); }}>Monitoring</a>
           <a href="/api/exports/blocklist.txt" target="_blank" rel="noopener noreferrer">↓ Blocklist</a>
           <a href="/api/exports/report.md" target="_blank" rel="noopener noreferrer">↓ Report</a>
         </nav>
@@ -472,7 +489,9 @@ const Dashboard: React.FC = () => {
       <main className="dashboard-main">
         <header className="dashboard-header">
           <div className="header-search">
-            {activeNav === 'sessions' ? (
+            {activeNav === 'monitoring' ? (
+              <div className="monitoring-search-label">Grafana history and trends</div>
+            ) : activeNav === 'sessions' ? (
               <input
                 type="text"
                 placeholder="Filter by source IP..."
@@ -504,7 +523,7 @@ const Dashboard: React.FC = () => {
 
         <section className="dashboard-content">
           {/* Stats Row — shown on overview, events, sessions */}
-          {activeNav !== 'intelligence' && activeNav !== 'devices' && !viewingSession && (
+          {activeNav !== 'intelligence' && activeNav !== 'devices' && activeNav !== 'monitoring' && !viewingSession && (
             <div className="stats-grid">
               {stats.map((stat, i) => (
                 <div key={i} className="stat-card">
@@ -776,6 +795,42 @@ const Dashboard: React.FC = () => {
             </div>
           )}
 
+          {/* ── Monitoring View ───────────────────────────────────── */}
+          {activeNav === 'monitoring' && !viewingSession && (
+            <div className="monitoring-view">
+              <div className="monitoring-panel">
+                <div className="panel-header">
+                  <div>
+                    <h3>Grafana Monitoring</h3>
+                    <p className="monitoring-subtitle">
+                      Historical device health and honeypot activity graphs filtered for your devices.
+                    </p>
+                  </div>
+                  <a
+                    className="monitoring-link"
+                    href={grafanaDashboardUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open in Grafana
+                  </a>
+                </div>
+                <div className="monitoring-frame-shell">
+                  <iframe
+                    key={authUser?.user_id || 'grafana'}
+                    title="Honeypot Grafana Monitoring"
+                    src={grafanaEmbedUrl}
+                    className="monitoring-frame"
+                  />
+                </div>
+                <div className="monitoring-notes">
+                  <span>Grafana URL: {grafanaBaseUrl}</span>
+                  <span>If the panel does not load, confirm `grafana` and `prometheus` are running.</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ── Devices View ──────────────────────────────────────── */}
           {activeNav === 'devices' && !viewingSession && (
             <div className="devices-view">
@@ -900,7 +955,7 @@ const Dashboard: React.FC = () => {
           )}
 
           {/* ── Overview / Events (existing views) ────────────────── */}
-          {activeNav !== 'sessions' && activeNav !== 'intelligence' && activeNav !== 'devices' && !viewingSession && (
+          {activeNav !== 'sessions' && activeNav !== 'intelligence' && activeNav !== 'devices' && activeNav !== 'monitoring' && !viewingSession && (
             <div className="content-grid">
               <div className="event-log-panel">
                 <div className="panel-header">

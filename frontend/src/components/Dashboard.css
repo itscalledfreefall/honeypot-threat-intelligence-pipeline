@@ -100,6 +100,11 @@
   color: var(--text-muted);
 }
 
+.monitoring-search-label {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -580,6 +585,64 @@
   background: rgba(225, 29, 72, 0.08) !important;
 }
 
+/* ── Monitoring ───────────────────────────────────────────────────── */
+.monitoring-view {
+  grid-column: 1 / -1;
+}
+
+.monitoring-panel {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.monitoring-subtitle {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.monitoring-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  background: var(--bg-tertiary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.monitoring-frame-shell {
+  margin-top: 18px;
+  min-height: 880px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  background: #0b0f19;
+}
+
+.monitoring-frame {
+  width: 100%;
+  min-height: 880px;
+  border: 0;
+  display: block;
+  background: #0b0f19;
+}
+
+.monitoring-notes {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
 /* ── Devices ──────────────────────────────────────────────────────── */
 .devices-view {
   grid-column: 1 / -1;
@@ -780,4 +843,15 @@
 .device-remove-btn:hover {
   border-color: var(--accent-red);
   color: var(--accent-red);
+}
+
+@media (max-width: 900px) {
+  .monitoring-frame-shell,
+  .monitoring-frame {
+    min-height: 720px;
+  }
+
+  .monitoring-notes {
+    flex-direction: column;
+  }
 }

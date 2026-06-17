@@ -1,8 +1,8 @@
 # Deployment
 
 This project is intended to run as a reproducible lab demo stack. Docker Compose
-starts the Cowrie honeypot, the Python backend pipeline/API, and the React
-frontend.
+starts the Cowrie honeypot, the Python backend pipeline/API, the React
+frontend, Prometheus, and Grafana.
 
 ## Quick Start
 
@@ -16,6 +16,18 @@ Open the dashboard at:
 
 ```text
 http://localhost:5173
+```
+
+Open Grafana at:
+
+```text
+http://localhost:3000
+```
+
+Open Prometheus at:
+
+```text
+http://localhost:9090
 ```
 
 The backend API is available at:
@@ -36,6 +48,8 @@ Rebuild only the services affected by the change:
 
 - Python pipeline, API, storage, reporting, or response changes: `docker compose up -d --build backend`
 - Frontend UI changes: `docker compose up -d --build frontend`
+- Prometheus scrape config changes: `docker compose up -d --build prometheus`
+- Grafana provisioning/dashboard changes: `docker compose up -d --build grafana`
 - Cowrie config changes: restart or recreate `cowrie`
 - Dockerfile or Compose changes: rebuild the affected service
 
@@ -72,6 +86,8 @@ captures, API keys, or local `.env` files.
 docker compose logs -f backend
 docker compose logs -f frontend
 docker compose logs -f cowrie
+docker compose logs -f prometheus
+docker compose logs -f grafana
 ```
 
 Stop the stack:

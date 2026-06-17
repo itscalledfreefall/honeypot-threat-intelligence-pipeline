@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -250,6 +251,76 @@ class DatabaseEventTests(unittest.TestCase):
         self.assertEqual(len(threats), 3)
         self.assertEqual(threats[0]["ip"], "10.0.0.1")
         self.assertEqual(threats[0]["count"], 3)
+
+    def test_initialize_upgrades_older_db_before_creating_risk_indexes(self) -> None:
+        legacy_path = Path(self.tmpdir.name) / "legacy.db"
+        conn = sqlite3.connect(legacy_path)
+        conn.execute(
+            """
+            CREATE TABLE events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                event_type TEXT NOT NULL,
+                honeypot TEXT NOT NULL DEFAULT 'cowrie',
+                source_ip TEXT,
+                source_port INTEGER,
+                destination_ip TEXT,
+                destination_port INTEGER,
+                protocol TEXT,
+                session_id TEXT,
+                username TEXT,
+                password TEXT,
+                command TEXT,
+                url TEXT,
+                raw_event TEXT NOT NULL,
+                attack_category TEXT,
+                severity TEXT,
+                classification_reason TEXT,
+                is_malicious INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE attack_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                source_ip TEXT NOT NULL,
+                honeypot TEXT NOT NULL,
+                start_time TEXT,
+                end_time TEXT,
+                event_count INTEGER DEFAULT 0,
+                attack_categories TEXT DEFAULT '[]',
+                severity_counts TEXT DEFAULT '{}',
+                is_malicious INTEGER DEFAULT 0,
+                first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+                last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(session_id, source_ip)
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        upgraded = Database(legacy_path)
+        upgraded.initialize()
+
+        with upgraded.connection() as conn:
+            event_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(events)").fetchall()
+            }
+            session_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(attack_sessions)").fetchall()
+            }
+
+        self.assertIn("risk_level", event_columns)
+        self.assertIn("risk_score", event_columns)
+        self.assertIn("risk_level", session_columns)
+        self.assertIn("risk_score", session_columns)
+        upgraded.close()
 
 
 if __name__ == "__main__":
