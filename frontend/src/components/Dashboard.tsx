@@ -879,8 +879,8 @@ const Dashboard: React.FC = () => {
                       <p><strong>Then, on the device you want to monitor:</strong></p>
                       <ol>
                         <li>Make sure Python 3 and <code>curl</code> are installed.</li>
-                        <li>Paste the command above into a terminal (any directory). It downloads the agent and starts reporting every 30s — leave it running.</li>
-                        <li>The device appears below as <span className="device-status online">online</span> within a few seconds.</li>
+                        <li>Paste the command above (any directory). It installs a <code>systemd</code> service that auto-starts on boot, restarts on failure, and keeps reporting — no terminal needed.</li>
+                        <li>Check it with <code>systemctl status honeypot-agent</code>. The device appears below as <span className="device-status online">online</span> within a few seconds.</li>
                       </ol>
                     </div>
                   </div>

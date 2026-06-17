@@ -7,9 +7,11 @@ external data execution) and reports them to the dashboard heartbeat endpoint.
 Usage:
     python3 device-agent.py --api-url http://dashboard:5000 --token <agent-token>
     python3 device-agent.py --api-url http://dashboard:5000 --token <token> --once
+    sudo python3 device-agent.py --install-service --api-url http://dashboard:5000 --token <token>
 
 The agent token is issued once when a device is enrolled from the Devices tab.
-It is not a user login token and only authorizes heartbeat updates.
+It is not a user login token and only authorizes heartbeat updates; it is also
+what links the running agent to its device (and owner) in the dashboard.
 """
 
 from __future__ import annotations
@@ -19,11 +21,16 @@ import json
 import os
 import shutil
 import socket
+import subprocess
 import time
 import urllib.request
 from typing import Any
 
 HEARTBEAT_INTERVAL_SECONDS = 30
+
+SERVICE_NAME = "honeypot-agent"
+INSTALL_DIR = "/opt/honeypot-agent"
+SERVICE_PATH = f"/etc/systemd/system/{SERVICE_NAME}.service"
 
 
 def _read_uptime_seconds() -> int | None:
@@ -137,6 +144,57 @@ def send_heartbeat(api_url: str, token: str, metrics: dict[str, Any]) -> bool:
         return False
 
 
+def install_service(api_url: str, token: str, interval: int) -> int:
+    """Install and start a systemd service that runs this agent persistently.
+
+    The token is baked into the unit (root-only readable) so the service stays
+    linked to its device across reboots. Requires root.
+    """
+    if os.geteuid() != 0:
+        print("error: --install-service must be run as root (use sudo)")
+        return 2
+
+    os.makedirs(INSTALL_DIR, exist_ok=True)
+    target = os.path.join(INSTALL_DIR, "device-agent.py")
+    source = os.path.abspath(__file__)
+    if os.path.abspath(source) != os.path.abspath(target):
+        shutil.copyfile(source, target)
+    os.chmod(target, 0o755)
+
+    unit = f"""[Unit]
+Description=Honeypot device monitoring agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 {target} --api-url {api_url} --token {token} --interval {interval}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+"""
+    with open(SERVICE_PATH, "w", encoding="utf-8") as fh:
+        fh.write(unit)
+    os.chmod(SERVICE_PATH, 0o600)  # contains the token
+
+    try:
+        subprocess.run(["systemctl", "daemon-reload"], check=True)
+        subprocess.run(
+            ["systemctl", "enable", "--now", f"{SERVICE_NAME}.service"], check=True
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        print(f"error: failed to enable service: {exc}")
+        return 1
+
+    print(f"Installed and started {SERVICE_NAME}.service")
+    print(f"  status:    systemctl status {SERVICE_NAME}")
+    print(f"  live logs: journalctl -u {SERVICE_NAME} -f")
+    print(f"  remove:    sudo systemctl disable --now {SERVICE_NAME} && sudo rm {SERVICE_PATH}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Honeypot device metrics agent.")
     parser.add_argument(
@@ -160,6 +218,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Send a single heartbeat and exit.",
     )
+    parser.add_argument(
+        "--install-service",
+        action="store_true",
+        help="Install and start a persistent systemd service (requires sudo).",
+    )
     return parser
 
 
@@ -170,6 +233,9 @@ def main() -> int:
         return 2
 
     interval = max(args.interval, 5)
+
+    if args.install_service:
+        return install_service(args.api_url, args.token, interval)
     if not args.once:
         print(
             f"Reporting to {args.api_url} every {interval}s. Press Ctrl-C to stop."

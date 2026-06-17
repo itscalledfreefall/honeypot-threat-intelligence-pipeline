@@ -289,7 +289,7 @@ def create_app(
         base_url = request.host_url.rstrip("/")
         install_command = (
             f"curl -fsSL {base_url}/api/devices/agent.py -o device-agent.py && "
-            f"python3 device-agent.py --api-url {base_url} --token {token}"
+            f"sudo python3 device-agent.py --install-service --api-url {base_url} --token {token}"
         )
         return jsonify({
             "device": device,

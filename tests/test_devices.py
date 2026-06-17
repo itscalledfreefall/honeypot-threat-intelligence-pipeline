@@ -1,11 +1,29 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from honeypot_pipeline.dashboard import create_app
 from honeypot_pipeline.storage.database import Database
+
+AGENT_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "device-agent.py"
+
+
+class DeviceAgentScriptTests(unittest.TestCase):
+    @unittest.skipIf(os.geteuid() == 0, "needs a non-root user to test the guard")
+    def test_install_service_requires_root(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(AGENT_SCRIPT), "--install-service",
+             "--api-url", "http://localhost:5000", "--token", "x"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("root", result.stdout.lower())
 
 
 class DeviceDatabaseTests(unittest.TestCase):
@@ -185,11 +203,13 @@ class DeviceAPITests(unittest.TestCase):
         self.assertEqual(listing["devices"][0]["status"], "online")
         self.assertEqual(listing["devices"][0]["metrics"]["ram_percent"], 42.0)
 
-    def test_install_command_downloads_agent(self) -> None:
+    def test_install_command_installs_systemd_service(self) -> None:
         create = self.client.post(
             "/api/devices", json={"name": "edge-vm"}, headers=self._auth()
         )
-        self.assertIn("/api/devices/agent.py", create.get_json()["install_command"])
+        cmd = create.get_json()["install_command"]
+        self.assertIn("/api/devices/agent.py", cmd)
+        self.assertIn("--install-service", cmd)
 
     def test_agent_script_is_served(self) -> None:
         resp = self.client.get("/api/devices/agent.py")
