@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -23,7 +24,9 @@ def iter_input_lines(
     poll_interval: float = 1.0,
     max_idle_polls: int | None = None,
 ) -> Iterator[str]:
-    with input_file.open("r", encoding="utf-8") as handle:
+    handle = input_file.open("r", encoding="utf-8")
+    try:
+        inode = os.fstat(handle.fileno()).st_ino
         idle_polls = 0
         while True:
             line = handle.readline()
@@ -35,8 +38,26 @@ def iter_input_lines(
                 break
             if max_idle_polls is not None and idle_polls >= max_idle_polls:
                 break
+            # At EOF while following: Cowrie rotates its JSON log daily by
+            # renaming it (the path then points to a new inode) and may
+            # truncate it (the file shrinks below our read position). In
+            # either case reopen the live file so we keep emitting events.
+            try:
+                stat = input_file.stat()
+            except FileNotFoundError:
+                stat = None
+            if stat is not None and (
+                stat.st_ino != inode or stat.st_size < handle.tell()
+            ):
+                handle.close()
+                handle = input_file.open("r", encoding="utf-8")
+                inode = os.fstat(handle.fileno()).st_ino
+                idle_polls = 0
+                continue
             idle_polls += 1
             time.sleep(poll_interval)
+    finally:
+        handle.close()
 
 
 def build_parser() -> argparse.ArgumentParser:

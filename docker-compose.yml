@@ -4,8 +4,11 @@ services:
     image: cowrie/cowrie:latest
     container_name: honeypot-cowrie
     restart: unless-stopped
-    ports:
-      - "2222:2222"
+    # Host networking so Cowrie sees the real attacker source IP. Behind
+    # Docker's default bridge/NAT every connection arrives as the gateway
+    # address (172.x.0.1), which destroys the attacker-IP threat intel.
+    # Cowrie binds 2222 directly on the host; no port mapping needed.
+    network_mode: "host"
     environment:
       COWRIE_TELNET_ENABLED: "no"
     volumes:

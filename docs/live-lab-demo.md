@@ -91,6 +91,27 @@ These should create:
 - command input events
 - possible file download events
 
+The Cowrie service runs with host networking (`network_mode: host`) so it
+records the real attacker source IP. Behind Docker's default bridge every
+connection would otherwise arrive as the gateway address (`172.x.0.1`).
+
+## Offline Attack Replay
+
+To drive the live dashboard without a real SSH connection, generate Cowrie
+JSONL offline and inject it into the running log volume:
+
+```bash
+# 1. Generate offline events
+python3 scripts/attack-simulator.py --scenario full-chain \
+  --offline-output /tmp/attack.json --count 5
+
+# 2. Inject into the live volume — the pipeline follower ingests it
+scripts/inject-cowrie-log.sh /tmp/attack.json
+```
+
+The follower tracks Cowrie's daily log rotation, so injected lines and live
+SSH attacks both flow through to the dashboard.
+
 ## What To Show
 
 Show the professor:
