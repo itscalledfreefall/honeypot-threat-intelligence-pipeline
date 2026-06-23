@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -398,6 +399,44 @@ class DashboardJSONAPITests(unittest.TestCase):
         self.assertEqual(data["ip"], "192.0.2.44")
         self.assertTrue(data["block_active"])
         self.assertEqual(data["blocked_packet_count"], 0)
+
+    def test_blocklist_block_endpoint_surfaces_iptables_stderr(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            records_path = Path(tmpdir) / "records.jsonl"
+            records_path.touch()
+            db_path = Path(tmpdir) / "auth.db"
+            db = Database(db_path)
+            db.initialize()
+            user = db.create_user(
+                email="owner@example.com",
+                password="strong-password",
+                first_name="Owner",
+                middle_name=None,
+                cloud_provider="local_server",
+            )
+            token = db.create_session(user["user_id"])
+            db.close()
+
+            app = create_app(records_path=records_path, db_path=db_path)
+
+            with patch(
+                "honeypot_pipeline.api.dashboard.FirewallManager.block_and_persist",
+                side_effect=subprocess.CalledProcessError(
+                    1,
+                    ["iptables", "-A", "INPUT"],
+                    stderr="iptables: Permission denied (you must be root)",
+                ),
+            ):
+                with app.test_client() as client:
+                    response = client.post(
+                        "/api/blocklist/block",
+                        json={"ip": "192.0.2.44"},
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+
+        self.assertEqual(response.status_code, 500)
+        data = response.get_json()
+        self.assertIn("Permission denied", data["error"])
 
     def test_sessions_endpoint_without_db(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

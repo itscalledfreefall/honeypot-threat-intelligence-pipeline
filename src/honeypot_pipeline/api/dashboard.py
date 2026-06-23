@@ -140,6 +140,7 @@ def create_app(
             comment_prefix=settings.firewall_comment_prefix,
             command_prefix=command_prefix,
             state_file=Path(settings.blocklist_state_file),
+            wait_seconds=settings.firewall_wait_seconds,
         )
 
     def _annotate_blocked_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -693,7 +694,15 @@ def create_app(
         try:
             results = manager.block_and_persist([raw_ip])
         except (OSError, subprocess.SubprocessError) as exc:
-            return jsonify({"error": f"Failed to apply firewall block: {exc}"}), 500
+            detail = ""
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip()
+                stdout = (exc.stdout or "").strip()
+                if stderr:
+                    detail = f" stderr: {stderr}"
+                elif stdout:
+                    detail = f" stdout: {stdout}"
+            return jsonify({"error": f"Failed to apply firewall block: {exc}.{detail}".strip()}), 500
 
         blocked_ips = set(manager.list_blocks())
         block_status = manager.list_block_statuses().get(raw_ip, {})

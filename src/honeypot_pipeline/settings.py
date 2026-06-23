@@ -22,6 +22,7 @@ class Settings:
     firewall_chain: str
     firewall_comment_prefix: str
     firewall_host_namespace: bool
+    firewall_wait_seconds: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -55,5 +56,9 @@ class Settings:
             firewall_host_namespace=_env_flag(
                 "FIREWALL_HOST_NAMESPACE",
                 True,
+            ),
+            firewall_wait_seconds=max(
+                0,
+                int(os.getenv("FIREWALL_WAIT_SECONDS", "5")),
             ),
         )

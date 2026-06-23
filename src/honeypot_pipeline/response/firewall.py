@@ -35,6 +35,7 @@ class FirewallManager:
         comment_prefix: str = "honeypot-block",
         command_prefix: list[str] | None = None,
         state_file: Path | None = None,
+        wait_seconds: int = 5,
     ) -> None:
         self.chain = chain
         self.apply = apply
@@ -42,6 +43,7 @@ class FirewallManager:
         self.comment_prefix = comment_prefix
         self.command_prefix = list(command_prefix or [])
         self.state_file = state_file
+        self.wait_seconds = max(0, wait_seconds)
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -77,7 +79,12 @@ class FirewallManager:
 
             ip = rule["ip"]
             if not self._rule_exists(ip):
-                self._run_iptables(["-A", self.chain, "-s", ip, "-m", "comment", "--comment", self.comment_prefix, "-j", "DROP"], check=True)
+                self._run_iptables(
+                    ["-A", self.chain, "-s", ip, "-m", "comment", "--comment", self.comment_prefix, "-j", "DROP"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
                 applied.append({"ip": ip, "command": f"{self._command_preview('A', ip)}  # APPLIED"})
             else:
                 applied.append({"ip": ip, "command": "# already blocked — skipped"})
@@ -95,7 +102,12 @@ class FirewallManager:
                 continue
 
             if self.apply:
-                self._run_iptables(["-D", self.chain, "-s", ip, "-m", "comment", "--comment", self.comment_prefix, "-j", "DROP"], check=True)
+                self._run_iptables(
+                    ["-D", self.chain, "-s", ip, "-m", "comment", "--comment", self.comment_prefix, "-j", "DROP"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
                 removed.append({"ip": ip, "command": f"{self._command_preview('D', ip)}  # REMOVED"})
             else:
                 removed.append({
@@ -181,7 +193,8 @@ class FirewallManager:
     # ── Internal helpers ─────────────────────────────────────────────────
 
     def _iptables_command(self, args: list[str]) -> list[str]:
-        return [*self.command_prefix, "iptables", *args]
+        wait_args = ["-w", str(self.wait_seconds)] if self.wait_seconds > 0 else []
+        return [*self.command_prefix, "iptables", *wait_args, *args]
 
     def _shell_iptables_command(self, args: list[str]) -> str:
         return " ".join([*self.command_prefix, "iptables", *args])
