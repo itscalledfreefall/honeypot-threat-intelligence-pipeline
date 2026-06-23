@@ -23,6 +23,7 @@ services:
       dockerfile: docker/backend/Dockerfile
     container_name: honeypot-backend
     restart: unless-stopped
+    privileged: true
     pid: "host"
     cap_add:
       - NET_ADMIN

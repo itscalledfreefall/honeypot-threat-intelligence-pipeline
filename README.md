@@ -212,9 +212,10 @@ After the pipeline identifies malicious IPs, you can apply iptables
 blocking rules.  All operations default to **dry-run** for safety.
 
 The **IP Block** dashboard tab can now send a real block request to the
-backend. In Docker Compose, the backend container is granted host-PID access
-plus `NET_ADMIN`/`SYS_ADMIN` so it can enter the host network namespace and
-apply the `iptables` DROP rule where Cowrie is actually listening.
+backend. In Docker Compose, the backend container runs with `privileged: true`
+plus host-PID access so it can use `nsenter -t 1 -n` to enter the host network
+namespace and apply the `iptables` DROP rule where Cowrie is actually
+listening.
 
 ```bash
 # Review what would be blocked (safe, no root needed)
