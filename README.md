@@ -211,6 +211,11 @@ enforced by the Flask API and React app.
 After the pipeline identifies malicious IPs, you can apply iptables
 blocking rules.  All operations default to **dry-run** for safety.
 
+The **IP Block** dashboard tab can now send a real block request to the
+backend. In Docker Compose, the backend container is granted host-PID access
+plus `NET_ADMIN`/`SYS_ADMIN` so it can enter the host network namespace and
+apply the `iptables` DROP rule where Cowrie is actually listening.
+
 ```bash
 # Review what would be blocked (safe, no root needed)
 scripts/apply-blocklist.sh review

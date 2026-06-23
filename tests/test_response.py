@@ -75,6 +75,19 @@ class FirewallManagerTests(unittest.TestCase):
             blocked = self.mgr.list_blocks()
         self.assertEqual(blocked, [])
 
+    def test_list_blocks_includes_persisted_ips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = FirewallManager(
+                chain="INPUT",
+                apply=False,
+                comment_prefix="test-hp-block",
+                state_file=Path(tmpdir) / "blocked-ips.json",
+            )
+            mgr._save_persisted_ips(["10.0.0.7"])
+            with patch.object(mgr, "_list_blocked_ips", return_value={"10.0.0.8"}):
+                blocked = mgr.list_blocks()
+        self.assertEqual(blocked, ["10.0.0.7", "10.0.0.8"])
+
     # ── generate_script ────────────────────────────────────────────────
 
     def test_generate_script_produces_valid_shell(self) -> None:
@@ -82,12 +95,29 @@ class FirewallManagerTests(unittest.TestCase):
         self.assertIn("#!/usr/bin/env bash", script)
         self.assertIn("iptables -A", script)
         self.assertIn("10.0.0.1", script)
-        self.assertIn("honeypot-block", script)
+        self.assertIn("test-hp-block", script)
 
     def test_generate_script_all_already_blocked(self) -> None:
         with patch.object(self.mgr, "_list_blocked_ips", return_value={"10.0.0.1"}):
             script = self.mgr.generate_script(["10.0.0.1"])
         self.assertIn("Nothing to do", script)
+
+    def test_block_and_persist_writes_state_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mgr = FirewallManager(
+                chain="INPUT",
+                apply=True,
+                comment_prefix="test-hp-block",
+                state_file=Path(tmpdir) / "blocked-ips.json",
+            )
+            with patch.object(mgr, "_rule_exists", return_value=False):
+                with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="")):
+                    with patch.object(mgr, "list_blocks", return_value=["10.0.0.9"]):
+                        mgr.block_and_persist(["10.0.0.9"])
+
+            payload = json.loads((Path(tmpdir) / "blocked-ips.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["ips"], ["10.0.0.9"])
 
     # ── _rule_exists ───────────────────────────────────────────────────
 

@@ -4,8 +4,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from honeypot_pipeline.dashboard import create_app
+from honeypot_pipeline.storage.database import Database
 from honeypot_pipeline.dashboard_data import filter_records, load_dataset
 from honeypot_pipeline.reporting import build_blocklist_entries, collect_blocklist_ips, get_malicious_records, is_block_candidate
 
@@ -303,6 +305,73 @@ class DashboardJSONAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual([item["ip"] for item in data["candidates"]], ["192.0.2.44"])
+
+    def test_blocklist_candidates_mark_blocked_ips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            records_path = Path(tmpdir) / "records.jsonl"
+            records_path.write_text(
+                json.dumps({
+                    "timestamp": "2026-03-18T12:12:00.000000Z",
+                    "event_type": "cowrie.login.failed",
+                    "source_ip": "192.0.2.44",
+                    "classification": {"attack_category": "brute_force", "severity": "medium"},
+                }) + "\n",
+                encoding="utf-8",
+            )
+            app = create_app(records_path=records_path)
+
+            with patch("honeypot_pipeline.api.dashboard.FirewallManager.list_blocks", return_value=["192.0.2.44"]):
+                with app.test_client() as client:
+                    response = client.get("/api/blocklist-candidates")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["candidates"][0]["blocked"])
+
+    def test_blocklist_block_endpoint_requires_auth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            records_path = Path(tmpdir) / "records.jsonl"
+            records_path.touch()
+            db_path = Path(tmpdir) / "auth.db"
+            app = create_app(records_path=records_path, db_path=db_path)
+
+            with app.test_client() as client:
+                response = client.post("/api/blocklist/block", json={"ip": "192.0.2.44"})
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_blocklist_block_endpoint_applies_firewall_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            records_path = Path(tmpdir) / "records.jsonl"
+            records_path.touch()
+            db_path = Path(tmpdir) / "auth.db"
+            db = Database(db_path)
+            db.initialize()
+            user = db.create_user(
+                email="owner@example.com",
+                password="strong-password",
+                first_name="Owner",
+                middle_name=None,
+                cloud_provider="local_server",
+            )
+            token = db.create_session(user["user_id"])
+            db.close()
+
+            app = create_app(records_path=records_path, db_path=db_path)
+
+            with patch("honeypot_pipeline.api.dashboard.FirewallManager.block_and_persist", return_value=[{"ip": "192.0.2.44", "command": "iptables -A INPUT -s 192.0.2.44 -j DROP  # APPLIED"}]):
+                with patch("honeypot_pipeline.api.dashboard.FirewallManager.list_blocks", return_value=["192.0.2.44"]):
+                    with app.test_client() as client:
+                        response = client.post(
+                            "/api/blocklist/block",
+                            json={"ip": "192.0.2.44"},
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["blocked"])
+        self.assertEqual(data["ip"], "192.0.2.44")
 
     def test_sessions_endpoint_without_db(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

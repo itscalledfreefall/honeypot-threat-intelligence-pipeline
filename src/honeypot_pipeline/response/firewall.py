@@ -33,11 +33,15 @@ class FirewallManager:
         apply: bool = False,
         table: str = "filter",
         comment_prefix: str = "honeypot-block",
+        command_prefix: list[str] | None = None,
+        state_file: Path | None = None,
     ) -> None:
         self.chain = chain
         self.apply = apply
         self.table = table
         self.comment_prefix = comment_prefix
+        self.command_prefix = list(command_prefix or [])
+        self.state_file = state_file
 
     # ── Public API ──────────────────────────────────────────────────────
 
@@ -53,12 +57,7 @@ class FirewallManager:
             if ip in existing:
                 rules.append({"ip": ip, "command": "# already blocked — skipped"})
                 continue
-            cmd = (
-                f"iptables -A {self.chain} "
-                f"-s {ip} "
-                f"-m comment --comment \"{self.comment_prefix}\" "
-                f"-j DROP"
-            )
+            cmd = self._command_preview("A", ip)
             rules.append({"ip": ip, "command": cmd})
 
         return rules
@@ -78,16 +77,8 @@ class FirewallManager:
 
             ip = rule["ip"]
             if not self._rule_exists(ip):
-                subprocess.run(
-                    [
-                        "iptables", "-A", self.chain,
-                        "-s", ip,
-                        "-m", "comment", "--comment", self.comment_prefix,
-                        "-j", "DROP",
-                    ],
-                    check=True,
-                )
-                applied.append({"ip": ip, "command": f"iptables -A {self.chain} -s {ip} ... -j DROP  # APPLIED"})
+                self._run_iptables(["-A", self.chain, "-s", ip, "-m", "comment", "--comment", self.comment_prefix, "-j", "DROP"], check=True)
+                applied.append({"ip": ip, "command": f"{self._command_preview('A', ip)}  # APPLIED"})
             else:
                 applied.append({"ip": ip, "command": "# already blocked — skipped"})
 
@@ -104,27 +95,31 @@ class FirewallManager:
                 continue
 
             if self.apply:
-                subprocess.run(
-                    [
-                        "iptables", "-D", self.chain,
-                        "-s", ip,
-                        "-m", "comment", "--comment", self.comment_prefix,
-                        "-j", "DROP",
-                    ],
-                    check=True,
-                )
-                removed.append({"ip": ip, "command": f"iptables -D {self.chain} -s {ip} ... -j DROP  # REMOVED"})
+                self._run_iptables(["-D", self.chain, "-s", ip, "-m", "comment", "--comment", self.comment_prefix, "-j", "DROP"], check=True)
+                removed.append({"ip": ip, "command": f"{self._command_preview('D', ip)}  # REMOVED"})
             else:
                 removed.append({
                     "ip": ip,
-                    "command": f"iptables -D {self.chain} -s {ip} -m comment --comment \"{self.comment_prefix}\" -j DROP",
+                    "command": self._command_preview("D", ip),
                 })
 
         return removed
 
+    def block_and_persist(self, ips: list[str]) -> list[dict[str, str]]:
+        results = self.block_ips(ips)
+        self._save_persisted_ips(self.list_blocks())
+        return results
+
+    def unblock_and_persist(self, ips: list[str]) -> list[dict[str, str]]:
+        results = self.unblock_ips(ips)
+        self._save_persisted_ips(self.list_blocks())
+        return results
+
     def list_blocks(self) -> list[str]:
         """Return IPs currently blocked by this tool."""
-        return sorted(self._list_blocked_ips())
+        persisted = self._load_persisted_ips()
+        actual = self._list_blocked_ips()
+        return sorted(actual | persisted)
 
     def generate_script(self, ips: list[str]) -> str:
         """Build a standalone shell script that applies the blocklist."""
@@ -153,9 +148,8 @@ class FirewallManager:
                     ip = rule["ip"]
                     # Use iptables -C to check before -A
                     lines.append(
-                        f"if ! iptables -C $CHAIN -s {ip} -j DROP 2>/dev/null; then\n"
-                        f"    iptables -A $CHAIN -s {ip} "
-                        f'-m comment --comment "honeypot-block" -j DROP\n'
+                        f"if ! {self._shell_iptables_command(['-C', '$CHAIN', '-s', ip, '-j', 'DROP'])} 2>/dev/null; then\n"
+                        f"    {self._shell_iptables_command(['-A', '$CHAIN', '-s', ip, '-m', 'comment', '--comment', self.comment_prefix, '-j', 'DROP'])}\n"
                         f"    echo '  BLOCKED {ip}'\n"
                         f"else\n"
                         f"    echo '  SKIPPED {ip} (already blocked)'\n"
@@ -169,12 +163,50 @@ class FirewallManager:
 
     # ── Internal helpers ─────────────────────────────────────────────────
 
+    def _iptables_command(self, args: list[str]) -> list[str]:
+        return [*self.command_prefix, "iptables", *args]
+
+    def _shell_iptables_command(self, args: list[str]) -> str:
+        return " ".join([*self.command_prefix, "iptables", *args])
+
+    def _command_preview(self, action: str, ip: str) -> str:
+        return self._shell_iptables_command(
+            [f"-{action}", self.chain, "-s", ip, "-m", "comment", "--comment", f"\"{self.comment_prefix}\"", "-j", "DROP"]
+        ).replace(" \"", " ").replace("\" ", " ")
+
+    def _run_iptables(self, args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+        return subprocess.run(self._iptables_command(args), **kwargs)
+
+    def _load_persisted_ips(self) -> set[str]:
+        if self.state_file is None or not self.state_file.exists():
+            return set()
+        try:
+            payload = json.loads(self.state_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return set()
+        if not isinstance(payload, dict):
+            return set()
+        ips = payload.get("ips")
+        if not isinstance(ips, list):
+            return set()
+        return {
+            ip for ip in ips
+            if isinstance(ip, str) and ip
+        }
+
+    def _save_persisted_ips(self, ips: list[str]) -> None:
+        if self.state_file is None:
+            return
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"ips": sorted(set(ips))}
+        self.state_file.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+
     def _rule_exists(self, ip: str) -> bool:
         """Check if a DROP rule for *ip* already exists in the chain."""
         try:
-            result = subprocess.run(
+            result = self._run_iptables(
                 [
-                    "iptables", "-C", self.chain,
+                    "-C", self.chain,
                     "-s", ip,
                     "-m", "comment", "--comment", self.comment_prefix,
                     "-j", "DROP",
@@ -189,8 +221,8 @@ class FirewallManager:
     def _list_blocked_ips(self) -> set[str]:
         """Parse iptables -L output for IPs blocked with our comment tag."""
         try:
-            result = subprocess.run(
-                ["iptables", "-L", self.chain, "-n", "--line-numbers"],
+            result = self._run_iptables(
+                ["-L", self.chain, "-n", "--line-numbers"],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -301,10 +333,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+    settings = Settings.from_env()
 
     mgr = FirewallManager(
-        chain=args.chain,
+        chain=args.chain or settings.firewall_chain,
         apply=args.apply,
+        comment_prefix=settings.firewall_comment_prefix,
+        command_prefix=["nsenter", "-t", "1", "-n"] if settings.firewall_host_namespace else [],
+        state_file=Path(settings.blocklist_state_file),
     )
 
     # --list mode
@@ -321,7 +357,6 @@ def main() -> int:
     if args.ip:
         ips = list(args.ip)
     else:
-        settings = Settings.from_env()
         db_path = args.db or (Path(settings.database_url) if Path(settings.database_url).exists() else None)
         ips = _resolve_blocklist_ips(
             records_file=args.records_file,
@@ -343,13 +378,13 @@ def main() -> int:
 
     # --unblock mode
     if args.unblock:
-        results = mgr.unblock_ips(ips)
+        results = mgr.unblock_and_persist(ips) if args.apply else mgr.unblock_ips(ips)
         for r in results:
             print(r["command"])
         return 0
 
     # Default: block
-    results = mgr.block_ips(ips)
+    results = mgr.block_and_persist(ips) if args.apply else mgr.block_ips(ips)
 
     if args.apply:
         applied_count = sum(1 for r in results if "APPLIED" in r["command"])

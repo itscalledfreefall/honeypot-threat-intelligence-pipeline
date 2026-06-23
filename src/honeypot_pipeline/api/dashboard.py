@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import math
+import subprocess
 from collections import Counter
 from io import BytesIO
 from pathlib import Path
@@ -25,6 +27,7 @@ from ..reporting import (
     collect_blocklist_ips,
     get_malicious_records,
 )
+from ..response.firewall import FirewallManager
 from ..settings import Settings
 from ..storage.database import Database
 
@@ -127,6 +130,23 @@ def create_app(
 
     def _auth_unavailable():
         return jsonify({"error": "Database-backed authentication is not configured."}), 503
+
+    def _firewall_manager(*, apply: bool) -> FirewallManager:
+        settings = Settings.from_env()
+        command_prefix = ["nsenter", "-t", "1", "-n"] if settings.firewall_host_namespace else []
+        return FirewallManager(
+            chain=settings.firewall_chain,
+            apply=apply,
+            comment_prefix=settings.firewall_comment_prefix,
+            command_prefix=command_prefix,
+            state_file=Path(settings.blocklist_state_file),
+        )
+
+    def _annotate_blocked_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        blocked_ips = set(_firewall_manager(apply=False).list_blocks())
+        for candidate in candidates:
+            candidate["blocked"] = candidate.get("ip") in blocked_ips
+        return candidates
 
     def get_dataset() -> DashboardDataset:
         if _has_db():
@@ -638,11 +658,44 @@ def create_app(
             db = _get_db()
             candidates = db.get_blocklist_candidates(limit=limit, source_ip=source_ip)
             db.close()
-            return jsonify({"total": len(candidates), "candidates": candidates})
+            return jsonify({"total": len(candidates), "candidates": _annotate_blocked_candidates(candidates)})
 
         dataset = get_dataset()
         candidates = build_blocklist_entries(dataset.records, source_ip=source_ip, limit=limit)
-        return jsonify({"total": len(candidates), "candidates": candidates})
+        return jsonify({"total": len(candidates), "candidates": _annotate_blocked_candidates(candidates)})
+
+    @app.route("/api/blocklist/block", methods=["POST"])
+    def api_blocklist_block():
+        db = _auth_db()
+        if db is None:
+            return _auth_unavailable()
+
+        user = db.get_user_by_session_token(_bearer_token())
+        db.close()
+        if user is None:
+            return jsonify({"error": "Authentication required."}), 401
+
+        payload = _request_json()
+        raw_ip = str(payload.get("ip", "")).strip()
+        try:
+            parsed_ip = ipaddress.ip_address(raw_ip)
+        except ValueError:
+            return jsonify({"error": "A valid IP address is required."}), 400
+        if parsed_ip.version != 4:
+            return jsonify({"error": "Only IPv4 blocking is currently supported."}), 400
+
+        manager = _firewall_manager(apply=True)
+        try:
+            results = manager.block_and_persist([raw_ip])
+        except (OSError, subprocess.SubprocessError) as exc:
+            return jsonify({"error": f"Failed to apply firewall block: {exc}"}), 500
+
+        blocked_ips = set(manager.list_blocks())
+        return jsonify({
+            "ip": raw_ip,
+            "blocked": raw_ip in blocked_ips,
+            "results": results,
+        })
 
     # ── Attack Session Endpoints (database only) ───────────────────────
 

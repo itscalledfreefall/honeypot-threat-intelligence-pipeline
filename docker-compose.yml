@@ -23,6 +23,10 @@ services:
       dockerfile: docker/backend/Dockerfile
     container_name: honeypot-backend
     restart: unless-stopped
+    pid: "host"
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
     ports:
       - "5000:5000"
     env_file:

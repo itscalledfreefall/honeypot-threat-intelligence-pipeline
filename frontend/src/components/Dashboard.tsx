@@ -55,6 +55,7 @@ interface BlocklistCandidate {
   top_attack_category: string;
   confidence: string;
   last_seen: string | null;
+  blocked?: boolean;
 }
 
 interface FilterOptions {
@@ -142,6 +143,8 @@ const Dashboard: React.FC = () => {
   const [threats, setThreats] = useState<Threat[]>([]);
   const [blocklistCandidates, setBlocklistCandidates] = useState<BlocklistCandidate[]>([]);
   const [blocklistTotal, setBlocklistTotal] = useState(0);
+  const [blockingIp, setBlockingIp] = useState<string | null>(null);
+  const [blockActionError, setBlockActionError] = useState<string | null>(null);
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({ event_types: [], attack_categories: [], protocols: [] });
   const [activeNav, setActiveNav] = useState('overview');
   const [loading, setLoading] = useState(true);
@@ -240,6 +243,40 @@ const Dashboard: React.FC = () => {
       console.error('Failed to fetch blocklist candidates:', err);
     }
   }, [filterIp]);
+
+  const blockCandidateIp = async (ip: string) => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return;
+
+    setBlockingIp(ip);
+    setBlockActionError(null);
+    try {
+      const res = await fetch('/api/blocklist/block', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ ip }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setBlockActionError(data.error || `Unable to block ${ip}.`);
+        return;
+      }
+      setBlocklistCandidates((prev) =>
+        prev.map((candidate) =>
+          candidate.ip === ip ? { ...candidate, blocked: true } : candidate
+        )
+      );
+      fetchBlocklist();
+    } catch (err) {
+      console.error('Failed to block IP:', err);
+      setBlockActionError(`Unable to block ${ip}.`);
+    } finally {
+      setBlockingIp(null);
+    }
+  };
 
   const fetchDevices = useCallback(async () => {
     const token = localStorage.getItem('authToken');
@@ -650,6 +687,9 @@ const Dashboard: React.FC = () => {
               <button className="reset-btn" onClick={resetBlocklistSearch}>Clear search</button>
             </div>
           )}
+          {activeNav === 'blocklist' && blockActionError && (
+            <div className="blocklist-action-error">{blockActionError}</div>
+          )}
 
           {/* ── Session Timeline View ─────────────────────────────── */}
           {viewingSession && sessionTimeline && (
@@ -816,6 +856,7 @@ const Dashboard: React.FC = () => {
                       <th>Category</th>
                       <th>Confidence</th>
                       <th>Last Seen</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -842,6 +883,19 @@ const Dashboard: React.FC = () => {
                           </span>
                         </td>
                         <td className="text-muted">{formatDateTime(candidate.last_seen)}</td>
+                        <td>
+                          {candidate.blocked ? (
+                            <span className="blocked-badge">Blocked</span>
+                          ) : (
+                            <button
+                              className="block-ip-btn"
+                              onClick={() => blockCandidateIp(candidate.ip)}
+                              disabled={blockingIp === candidate.ip}
+                            >
+                              {blockingIp === candidate.ip ? 'Blocking…' : 'Block'}
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

@@ -554,6 +554,15 @@
   font-weight: 500;
 }
 
+.blocklist-action-error {
+  padding: 12px 14px;
+  border: 1px solid rgba(225, 29, 72, 0.25);
+  background: rgba(225, 29, 72, 0.08);
+  border-radius: 12px;
+  color: #fda4af;
+  font-size: 0.85rem;
+}
+
 .blocklist-panel {
   overflow-x: auto;
 }
@@ -571,6 +580,39 @@
 
 .blocklist-score strong {
   font-size: 1rem;
+}
+
+.block-ip-btn {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(225, 29, 72, 0.25);
+  background: rgba(225, 29, 72, 0.08);
+  color: #fda4af;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.block-ip-btn:hover:enabled {
+  background: rgba(225, 29, 72, 0.16);
+  border-color: rgba(251, 113, 133, 0.45);
+}
+
+.block-ip-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.blocked-badge {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: #6ee7b7;
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 /* Timeline Panel */
