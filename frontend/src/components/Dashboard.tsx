@@ -45,6 +45,18 @@ interface Threat {
   count: number;
 }
 
+interface BlocklistCandidate {
+  ip: string;
+  total_event_count: number;
+  malicious_event_count: number;
+  threat_score: number;
+  avg_risk_score: number;
+  risk_level: string;
+  top_attack_category: string;
+  confidence: string;
+  last_seen: string | null;
+}
+
 interface FilterOptions {
   event_types: string[];
   attack_categories: string[];
@@ -128,6 +140,8 @@ const Dashboard: React.FC = () => {
   const [summary, setSummary] = useState<SummaryData | null>(null);
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [threats, setThreats] = useState<Threat[]>([]);
+  const [blocklistCandidates, setBlocklistCandidates] = useState<BlocklistCandidate[]>([]);
+  const [blocklistTotal, setBlocklistTotal] = useState(0);
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({ event_types: [], attack_categories: [], protocols: [] });
   const [activeNav, setActiveNav] = useState('overview');
   const [loading, setLoading] = useState(true);
@@ -211,6 +225,21 @@ const Dashboard: React.FC = () => {
       console.error('Failed to fetch sessions:', err);
     }
   }, [filterIp, sessionsMaliciousOnly]);
+
+  const fetchBlocklist = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({ limit: '250' });
+      if (filterIp) params.set('source_ip', filterIp);
+      const res = await fetch(`/api/blocklist-candidates?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setBlocklistCandidates(data.candidates || []);
+        setBlocklistTotal(data.total || 0);
+      }
+    } catch (err) {
+      console.error('Failed to fetch blocklist candidates:', err);
+    }
+  }, [filterIp]);
 
   const fetchDevices = useCallback(async () => {
     const token = localStorage.getItem('authToken');
@@ -374,6 +403,17 @@ const Dashboard: React.FC = () => {
   }, [activeNav, fetchSessions]);
 
   useEffect(() => {
+    if (activeNav === 'blocklist') {
+      const timeout = window.setTimeout(fetchBlocklist, 0);
+      const interval = setInterval(fetchBlocklist, REFRESH_INTERVAL);
+      return () => {
+        window.clearTimeout(timeout);
+        clearInterval(interval);
+      };
+    }
+  }, [activeNav, fetchBlocklist]);
+
+  useEffect(() => {
     if (activeNav === 'devices') {
       const timeout = window.setTimeout(fetchDevices, 0);
       const interval = setInterval(fetchDevices, REFRESH_INTERVAL);
@@ -449,6 +489,10 @@ const Dashboard: React.FC = () => {
     setFilterMaliciousOnly(false);
   };
 
+  const resetBlocklistSearch = () => {
+    setFilterIp('');
+  };
+
   if (loading) {
     return (
       <div className="dashboard-container">
@@ -475,6 +519,7 @@ const Dashboard: React.FC = () => {
           <a href="#" className={activeNav === 'overview' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('overview'); closeTimeline(); }}>Overview</a>
           <a href="#" className={activeNav === 'events' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('events'); closeTimeline(); }}>Events</a>
           <a href="#" className={activeNav === 'sessions' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('sessions'); closeTimeline(); }}>Sessions</a>
+          <a href="#" className={activeNav === 'blocklist' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('blocklist'); closeTimeline(); }}>IP Block</a>
           <a href="#" className={activeNav === 'intelligence' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('intelligence'); closeTimeline(); }}>Intelligence</a>
           <a href="#" className={activeNav === 'devices' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('devices'); closeTimeline(); }}>Devices</a>
           <a href="#" className={activeNav === 'monitoring' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActiveNav('monitoring'); closeTimeline(); }}>Monitoring</a>
@@ -491,6 +536,13 @@ const Dashboard: React.FC = () => {
           <div className="header-search">
             {activeNav === 'monitoring' ? (
               <div className="monitoring-search-label">Grafana history and trends</div>
+            ) : activeNav === 'blocklist' ? (
+              <input
+                type="text"
+                placeholder="Search blocklist IP..."
+                value={filterIp}
+                onChange={(e) => setFilterIp(e.target.value)}
+              />
             ) : activeNav === 'sessions' ? (
               <input
                 type="text"
@@ -579,6 +631,23 @@ const Dashboard: React.FC = () => {
               <span className="sessions-count">
                 {sessionsTotal} session{sessionsTotal !== 1 ? 's' : ''}
               </span>
+            </div>
+          )}
+
+          {activeNav === 'blocklist' && !viewingSession && (
+            <div className="filters-bar">
+              <span className="sessions-count">
+                {blocklistTotal} candidate{blocklistTotal !== 1 ? 's' : ''} sorted by threat score
+              </span>
+              <a
+                className="export-btn inline-export-btn"
+                href={filterIp ? `/api/exports/blocklist.txt?source_ip=${encodeURIComponent(filterIp)}` : '/api/exports/blocklist.txt'}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Export blocklist
+              </a>
+              <button className="reset-btn" onClick={resetBlocklistSearch}>Clear search</button>
             </div>
           )}
 
@@ -712,6 +781,67 @@ const Dashboard: React.FC = () => {
                             Timeline →
                           </button>
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+
+          {activeNav === 'blocklist' && !viewingSession && (
+            <div className="event-log-panel blocklist-panel" style={{ gridColumn: '1 / -1' }}>
+              <div className="panel-header">
+                <div>
+                  <h3>IP Block Candidates</h3>
+                  <p className="panel-subtitle">
+                    Threat-ranked malicious source IPs for review before firewall enforcement.
+                  </p>
+                </div>
+              </div>
+
+              {blocklistCandidates.length === 0 ? (
+                <div className="empty-state">
+                  <p>No malicious IPs match the current search.</p>
+                </div>
+              ) : (
+                <table className="event-table blocklist-table">
+                  <thead>
+                    <tr>
+                      <th>Threat</th>
+                      <th>Risk</th>
+                      <th>Source IP</th>
+                      <th>Malicious Events</th>
+                      <th>Total Events</th>
+                      <th>Category</th>
+                      <th>Confidence</th>
+                      <th>Last Seen</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {blocklistCandidates.map((candidate) => (
+                      <tr key={candidate.ip}>
+                        <td>
+                          <div className="blocklist-score">
+                            <strong>{candidate.threat_score}</strong>
+                            <span className="text-muted">avg {candidate.avg_risk_score}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`severity-pill ${severityClass(candidate.risk_level)}`}>
+                            {candidate.risk_level}
+                          </span>
+                        </td>
+                        <td><span className="code-text">{candidate.ip}</span></td>
+                        <td>{candidate.malicious_event_count}</td>
+                        <td>{candidate.total_event_count}</td>
+                        <td>{candidate.top_attack_category.replace(/_/g, ' ')}</td>
+                        <td>
+                          <span className={`severity-pill ${severityClass(candidate.confidence)}`}>
+                            {candidate.confidence}
+                          </span>
+                        </td>
+                        <td className="text-muted">{formatDateTime(candidate.last_seen)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -955,7 +1085,7 @@ const Dashboard: React.FC = () => {
           )}
 
           {/* ── Overview / Events (existing views) ────────────────── */}
-          {activeNav !== 'sessions' && activeNav !== 'intelligence' && activeNav !== 'devices' && activeNav !== 'monitoring' && !viewingSession && (
+          {activeNav !== 'sessions' && activeNav !== 'blocklist' && activeNav !== 'intelligence' && activeNav !== 'devices' && activeNav !== 'monitoring' && !viewingSession && (
             <div className="content-grid">
               <div className="event-log-panel">
                 <div className="panel-header">

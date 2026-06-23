@@ -19,7 +19,12 @@ from .dashboard_data import (
     load_dataset,
     load_dataset_from_db,
 )
-from ..reporting import build_markdown_report, collect_blocklist_ips, get_malicious_records
+from ..reporting import (
+    build_blocklist_entries,
+    build_markdown_report,
+    collect_blocklist_ips,
+    get_malicious_records,
+)
 from ..settings import Settings
 from ..storage.database import Database
 
@@ -623,6 +628,22 @@ def create_app(
         ]
         return jsonify({"threats": top})
 
+    @app.route("/api/blocklist-candidates")
+    def api_blocklist_candidates():
+        source_ip = request.args.get("source_ip", "").strip() or None
+        limit = request.args.get("limit", type=int) or 100
+        limit = max(1, min(limit, 500))
+
+        if _has_db():
+            db = _get_db()
+            candidates = db.get_blocklist_candidates(limit=limit, source_ip=source_ip)
+            db.close()
+            return jsonify({"total": len(candidates), "candidates": candidates})
+
+        dataset = get_dataset()
+        candidates = build_blocklist_entries(dataset.records, source_ip=source_ip, limit=limit)
+        return jsonify({"total": len(candidates), "candidates": candidates})
+
     # ── Attack Session Endpoints (database only) ───────────────────────
 
     @app.route("/api/sessions")
@@ -688,8 +709,23 @@ def create_app(
 
     @app.route("/api/exports/blocklist.txt")
     def export_blocklist():
-        records = get_filtered_records()
-        blocklist_ips = collect_blocklist_ips(records)
+        source_ip = request.args.get("source_ip", "").strip() or None
+        event_type = request.args.get("event_type", "").strip() or None
+        attack_category = request.args.get("attack_category", "").strip() or None
+        protocol = request.args.get("protocol", "").strip() or None
+        malicious_only = request.args.get("malicious_only") == "1"
+
+        if _has_db() and not any((event_type, attack_category, protocol, malicious_only)):
+            db = _get_db()
+            blocklist_ips = [
+                candidate["ip"]
+                for candidate in db.get_blocklist_candidates(limit=10_000, source_ip=source_ip)
+            ]
+            db.close()
+        else:
+            records = get_filtered_records()
+            blocklist_ips = collect_blocklist_ips(records)
+
         payload = "\n".join(blocklist_ips) + ("\n" if blocklist_ips else "")
         return send_file(
             BytesIO(payload.encode("utf-8")),

@@ -252,6 +252,40 @@ class DatabaseEventTests(unittest.TestCase):
         self.assertEqual(threats[0]["ip"], "10.0.0.1")
         self.assertEqual(threats[0]["count"], 3)
 
+    def test_get_blocklist_candidates_orders_by_threat(self) -> None:
+        self.db.insert_event(
+            self._make_record(
+                source_ip="198.51.100.50",
+                event_type="cowrie.command.input",
+                classification={"attack_category": "malware_download", "severity": "high"},
+                threat_intel={"status": "completed", "score": {"is_malicious": True, "confidence": "high"}},
+                risk={"score": 95, "level": "critical", "reasons": ["category:malware_download"]},
+            )
+        )
+        self.db.insert_event(
+            self._make_record(
+                source_ip="203.0.113.10",
+                event_type="cowrie.login.failed",
+                classification={"attack_category": "brute_force", "severity": "medium"},
+                threat_intel={"status": "completed", "score": {"is_malicious": True, "confidence": "low"}},
+                risk={"score": 50, "level": "medium", "reasons": ["category:brute_force"]},
+            )
+        )
+        self.db.insert_event(
+            self._make_record(
+                source_ip="198.51.100.50",
+                event_type="cowrie.session.connect",
+                threat_intel={"status": "completed", "score": {"is_malicious": False, "confidence": "low"}},
+            )
+        )
+
+        candidates = self.db.get_blocklist_candidates(limit=10)
+
+        self.assertEqual([item["ip"] for item in candidates], ["198.51.100.50", "203.0.113.10"])
+        self.assertEqual(candidates[0]["total_event_count"], 2)
+        self.assertEqual(candidates[0]["malicious_event_count"], 1)
+        self.assertEqual(candidates[0]["risk_level"], "critical")
+
     def test_initialize_upgrades_older_db_before_creating_risk_indexes(self) -> None:
         legacy_path = Path(self.tmpdir.name) / "legacy.db"
         conn = sqlite3.connect(legacy_path)

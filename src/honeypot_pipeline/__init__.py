@@ -7,6 +7,7 @@ from .enrichment import enrich_event_with_abuseipdb, enrich_event_with_threat_in
 from .ioc import extract_indicators
 from .models import NormalizedEvent
 from .reporting import (
+    build_blocklist_entries,
     build_markdown_report,
     collect_blocklist_ips,
     export_report_bundle,
@@ -38,6 +39,7 @@ __all__ = [
     "Settings",
     "VirusTotalClient",
     "VirusTotalIPResult",
+    "build_blocklist_entries",
     "build_markdown_report",
     "build_event_record",
     "classify_event",

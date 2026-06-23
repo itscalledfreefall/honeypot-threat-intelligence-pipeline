@@ -2,6 +2,7 @@
 
 from .markdown import (
     build_markdown_report,
+    build_blocklist_entries,
     build_parser,
     collect_blocklist_ips,
     export_report_bundle,
@@ -11,6 +12,7 @@ from .markdown import (
 )
 
 __all__ = [
+    "build_blocklist_entries",
     "build_markdown_report",
     "build_parser",
     "collect_blocklist_ips",
@@ -19,4 +21,3 @@ __all__ = [
     "is_record_malicious",
     "main",
 ]
-

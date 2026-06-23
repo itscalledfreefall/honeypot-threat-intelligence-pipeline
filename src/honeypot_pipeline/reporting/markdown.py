@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..analysis.risk import risk_level, score_event_record
 from ..api.dashboard_data import load_dataset
 from ..storage import write_json_document
 
@@ -25,13 +26,153 @@ def get_malicious_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]
     return [record for record in records if is_record_malicious(record)]
 
 
+def _confidence_rank(value: str | None) -> int:
+    mapping = {"high": 3, "medium": 2, "low": 1}
+    return mapping.get((value or "").lower(), 0)
+
+
+def _confidence_label(rank: int) -> str:
+    if rank >= 3:
+        return "high"
+    if rank == 2:
+        return "medium"
+    if rank == 1:
+        return "low"
+    return "unknown"
+
+
+def _record_risk(record: dict[str, Any]) -> tuple[int, str]:
+    risk = record.get("risk")
+    if isinstance(risk, dict):
+        score = int(risk.get("score") or 0)
+        level = str(risk.get("level") or risk_level(score))
+        return score, level
+
+    computed = score_event_record(record)
+    score = int(computed.get("score") or 0)
+    level = str(computed.get("level") or risk_level(score))
+    return score, level
+
+
+def build_blocklist_entries(
+    records: list[dict[str, Any]],
+    source_ip: str | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    prefix = source_ip.strip() if isinstance(source_ip, str) else ""
+
+    for record in records:
+        ip = record.get("source_ip")
+        if not isinstance(ip, str) or not ip:
+            continue
+        if prefix and not ip.startswith(prefix):
+            continue
+
+        risk_score, _ = _record_risk(record)
+        classification = record.get("classification")
+        category = None
+        if isinstance(classification, dict):
+            raw_category = classification.get("attack_category")
+            if isinstance(raw_category, str) and raw_category:
+                category = raw_category
+
+        bucket = grouped.setdefault(
+            ip,
+            {
+                "ip": ip,
+                "total_event_count": 0,
+                "malicious_event_count": 0,
+                "threat_score": 0,
+                "risk_score_total": 0,
+                "top_attack_category": "unknown",
+                "attack_category_counts": {},
+                "attack_category_max_risk": {},
+                "last_seen": None,
+                "confidence_rank": 0,
+            },
+        )
+        bucket["total_event_count"] += 1
+
+        if not is_record_malicious(record):
+            continue
+
+        bucket["malicious_event_count"] += 1
+        bucket["threat_score"] = max(bucket["threat_score"], risk_score)
+        bucket["risk_score_total"] += risk_score
+
+        timestamp = record.get("timestamp")
+        if isinstance(timestamp, str) and timestamp:
+            last_seen = bucket.get("last_seen")
+            if not isinstance(last_seen, str) or timestamp > last_seen:
+                bucket["last_seen"] = timestamp
+
+        threat_intel = record.get("threat_intel")
+        confidence = None
+        if isinstance(threat_intel, dict):
+            score = threat_intel.get("score")
+            if isinstance(score, dict):
+                raw_confidence = score.get("confidence")
+                if isinstance(raw_confidence, str):
+                    confidence = raw_confidence
+        bucket["confidence_rank"] = max(
+            bucket["confidence_rank"],
+            _confidence_rank(confidence),
+        )
+
+        if category:
+            counts = bucket["attack_category_counts"]
+            max_risks = bucket["attack_category_max_risk"]
+            counts[category] = counts.get(category, 0) + 1
+            max_risks[category] = max(max_risks.get(category, 0), risk_score)
+
+    entries: list[dict[str, Any]] = []
+    for bucket in grouped.values():
+        malicious_event_count = int(bucket["malicious_event_count"])
+        if malicious_event_count == 0:
+            continue
+
+        category_counts = bucket["attack_category_counts"]
+        category_max_risk = bucket["attack_category_max_risk"]
+        top_attack_category = "unknown"
+        if category_counts:
+            top_attack_category = sorted(
+                category_counts,
+                key=lambda item: (
+                    -int(category_counts[item]),
+                    -int(category_max_risk.get(item, 0)),
+                    item,
+                ),
+            )[0]
+
+        threat_score = int(bucket["threat_score"])
+        avg_risk_score = round(bucket["risk_score_total"] / malicious_event_count, 1)
+        entries.append(
+            {
+                "ip": bucket["ip"],
+                "total_event_count": int(bucket["total_event_count"]),
+                "malicious_event_count": malicious_event_count,
+                "threat_score": threat_score,
+                "avg_risk_score": avg_risk_score,
+                "risk_level": risk_level(threat_score),
+                "top_attack_category": top_attack_category,
+                "confidence": _confidence_label(int(bucket["confidence_rank"])),
+                "last_seen": bucket["last_seen"],
+            }
+        )
+
+    entries.sort(key=lambda item: item["ip"])
+    entries.sort(key=lambda item: item["last_seen"] or "", reverse=True)
+    entries.sort(key=lambda item: float(item["avg_risk_score"]), reverse=True)
+    entries.sort(key=lambda item: int(item["malicious_event_count"]), reverse=True)
+    entries.sort(key=lambda item: int(item["threat_score"]), reverse=True)
+    if limit is not None:
+        return entries[:limit]
+    return entries
+
+
 def collect_blocklist_ips(records: list[dict[str, Any]]) -> list[str]:
-    ips = {
-        record.get("source_ip")
-        for record in get_malicious_records(records)
-        if isinstance(record.get("source_ip"), str) and record.get("source_ip")
-    }
-    return sorted(ips)
+    return [entry["ip"] for entry in build_blocklist_entries(records)]
 
 
 def build_markdown_report(

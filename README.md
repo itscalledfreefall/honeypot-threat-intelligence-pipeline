@@ -143,7 +143,7 @@ The pipeline currently supports:
 5. persistent SQLite storage with 60-second deduplication window
 6. attack session tracking with timeline views
 7. read-only Flask JSON API backend
-8. React dashboard with Overview, Events, Sessions, Timeline, Devices, and Monitoring tabs
+8. React dashboard with Overview, Events, Sessions, IP Block, Timeline, Devices, and Monitoring tabs
 9. exportable blocklists, malicious record exports, and markdown reports
 10. automated iptables firewall blocking with dry-run safety and shell script generation
 11. Docker-based Cowrie lab environment with a helper script for live demos

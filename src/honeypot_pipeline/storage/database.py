@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from ..analysis.risk import score_session_snapshot
+from ..analysis.risk import risk_level, score_session_snapshot
 from ..auth import (
     AuthError,
     generate_token,
@@ -798,6 +798,87 @@ class Database:
                 (limit,),
             ).fetchall()
         return [{"ip": r["source_ip"], "count": r["cnt"]} for r in rows]
+
+    def get_blocklist_candidates(
+        self,
+        limit: int = 100,
+        source_ip: str | None = None,
+    ) -> list[dict[str, Any]]:
+        where = ["e.source_ip IS NOT NULL", "e.source_ip != ''"]
+        params: list[Any] = []
+        if source_ip:
+            where.append("e.source_ip LIKE ?")
+            params.append(f"{source_ip}%")
+
+        where_clause = " AND ".join(where)
+        with self.connection() as conn:
+            rows = conn.execute(
+                f"""
+                WITH grouped AS (
+                    SELECT e.source_ip,
+                           COUNT(*) AS total_event_count,
+                           SUM(CASE WHEN e.is_malicious = 1 THEN 1 ELSE 0 END) AS malicious_event_count,
+                           MAX(CASE WHEN e.is_malicious = 1 THEN e.risk_score ELSE 0 END) AS threat_score,
+                           AVG(CASE WHEN e.is_malicious = 1 THEN e.risk_score END) AS avg_risk_score,
+                           MAX(CASE WHEN e.is_malicious = 1 THEN e.timestamp ELSE NULL END) AS last_seen,
+                           MAX(
+                               CASE WHEN e.is_malicious = 1 THEN
+                                   CASE COALESCE(ti.combined_confidence, '')
+                                       WHEN 'high' THEN 3
+                                       WHEN 'medium' THEN 2
+                                       WHEN 'low' THEN 1
+                                       ELSE 0
+                                   END
+                               ELSE 0 END
+                           ) AS confidence_rank
+                      FROM events e
+                      LEFT JOIN threat_intel ti ON ti.event_id = e.id
+                     WHERE {where_clause}
+                     GROUP BY e.source_ip
+                    HAVING SUM(CASE WHEN e.is_malicious = 1 THEN 1 ELSE 0 END) > 0
+                )
+                SELECT g.*,
+                       CASE g.confidence_rank
+                           WHEN 3 THEN 'high'
+                           WHEN 2 THEN 'medium'
+                           WHEN 1 THEN 'low'
+                           ELSE 'unknown'
+                       END AS confidence,
+                       (
+                           SELECT e2.attack_category
+                             FROM events e2
+                            WHERE e2.source_ip = g.source_ip
+                              AND e2.is_malicious = 1
+                              AND e2.attack_category IS NOT NULL
+                            GROUP BY e2.attack_category
+                            ORDER BY COUNT(*) DESC, MAX(e2.risk_score) DESC, e2.attack_category ASC
+                            LIMIT 1
+                       ) AS top_attack_category
+                  FROM grouped g
+                 ORDER BY g.threat_score DESC,
+                          g.malicious_event_count DESC,
+                          g.avg_risk_score DESC,
+                          g.last_seen DESC,
+                          g.source_ip ASC
+                 LIMIT ?
+                """,
+                params + [limit],
+            ).fetchall()
+
+        return [
+            {
+                "ip": row["source_ip"],
+                "total_event_count": int(row["total_event_count"] or 0),
+                "malicious_event_count": int(row["malicious_event_count"] or 0),
+                "threat_score": int(row["threat_score"] or 0),
+                "avg_risk_score": round(float(row["avg_risk_score"] or 0), 1),
+                "risk_level": risk_level(int(row["threat_score"] or 0)),
+                "top_attack_category": row["top_attack_category"] or "unknown",
+                "confidence": row["confidence"] or "unknown",
+                "last_seen": row["last_seen"],
+            }
+            for row in rows
+        ]
 
     def get_filter_options(self) -> dict[str, list[str]]:
         with self.connection() as conn:

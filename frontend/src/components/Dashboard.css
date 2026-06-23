@@ -291,6 +291,12 @@
   font-weight: 600;
 }
 
+.panel-subtitle {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
 .view-all {
   background: transparent;
   color: var(--text-muted);
@@ -346,9 +352,12 @@
   text-transform: capitalize;
 }
 
+.severity-pill.critical { background: rgba(190, 24, 93, 0.18); color: #fb7185; }
 .severity-pill.high { background: rgba(225, 29, 72, 0.1); color: var(--accent-red); }
 .severity-pill.medium { background: rgba(245, 158, 11, 0.1); color: #F59E0B; }
 .severity-pill.low { background: rgba(16, 185, 129, 0.1); color: #10B981; }
+.severity-pill.minimal,
+.severity-pill.unknown { background: rgba(148, 163, 184, 0.12); color: #cbd5e1; }
 
 .detail-link {
   color: var(--text-muted);
@@ -438,6 +447,11 @@
   background: rgba(225, 29, 72, 0.08);
   color: var(--accent-red);
   border-color: var(--accent-red);
+}
+
+.inline-export-btn {
+  width: auto;
+  min-width: 160px;
 }
 
 /* Loading State */
@@ -538,6 +552,25 @@
   font-size: 0.85rem;
   color: var(--text-muted);
   font-weight: 500;
+}
+
+.blocklist-panel {
+  overflow-x: auto;
+}
+
+.blocklist-table th,
+.blocklist-table td {
+  white-space: nowrap;
+}
+
+.blocklist-score {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.blocklist-score strong {
+  font-size: 1rem;
 }
 
 /* Timeline Panel */
