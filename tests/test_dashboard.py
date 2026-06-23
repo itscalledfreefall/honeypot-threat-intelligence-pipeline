@@ -320,13 +320,26 @@ class DashboardJSONAPITests(unittest.TestCase):
             )
             app = create_app(records_path=records_path)
 
-            with patch("honeypot_pipeline.api.dashboard.FirewallManager.list_blocks", return_value=["192.0.2.44"]):
+            with patch(
+                "honeypot_pipeline.api.dashboard.FirewallManager.list_block_statuses",
+                return_value={
+                    "192.0.2.44": {
+                        "blocked": True,
+                        "active": True,
+                        "packet_count": 4,
+                        "byte_count": 240,
+                    }
+                },
+            ):
                 with app.test_client() as client:
                     response = client.get("/api/blocklist-candidates")
 
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertTrue(data["candidates"][0]["blocked"])
+        self.assertTrue(data["candidates"][0]["block_active"])
+        self.assertEqual(data["candidates"][0]["blocked_packet_count"], 4)
+        self.assertEqual(data["candidates"][0]["blocked_byte_count"], 240)
 
     def test_blocklist_block_endpoint_requires_auth(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -361,17 +374,30 @@ class DashboardJSONAPITests(unittest.TestCase):
 
             with patch("honeypot_pipeline.api.dashboard.FirewallManager.block_and_persist", return_value=[{"ip": "192.0.2.44", "command": "iptables -A INPUT -s 192.0.2.44 -j DROP  # APPLIED"}]):
                 with patch("honeypot_pipeline.api.dashboard.FirewallManager.list_blocks", return_value=["192.0.2.44"]):
-                    with app.test_client() as client:
-                        response = client.post(
-                            "/api/blocklist/block",
-                            json={"ip": "192.0.2.44"},
-                            headers={"Authorization": f"Bearer {token}"},
-                        )
+                    with patch(
+                        "honeypot_pipeline.api.dashboard.FirewallManager.list_block_statuses",
+                        return_value={
+                            "192.0.2.44": {
+                                "blocked": True,
+                                "active": True,
+                                "packet_count": 0,
+                                "byte_count": 0,
+                            }
+                        },
+                    ):
+                        with app.test_client() as client:
+                            response = client.post(
+                                "/api/blocklist/block",
+                                json={"ip": "192.0.2.44"},
+                                headers={"Authorization": f"Bearer {token}"},
+                            )
 
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertTrue(data["blocked"])
         self.assertEqual(data["ip"], "192.0.2.44")
+        self.assertTrue(data["block_active"])
+        self.assertEqual(data["blocked_packet_count"], 0)
 
     def test_sessions_endpoint_without_db(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

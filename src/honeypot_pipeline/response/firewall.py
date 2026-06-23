@@ -118,8 +118,25 @@ class FirewallManager:
     def list_blocks(self) -> list[str]:
         """Return IPs currently blocked by this tool."""
         persisted = self._load_persisted_ips()
-        actual = self._list_blocked_ips()
+        actual = set(self._list_blocked_rule_stats())
         return sorted(actual | persisted)
+
+    def list_block_statuses(self) -> dict[str, dict[str, int | bool]]:
+        """Return blocked IPs with live firewall hit counters."""
+        persisted = self._load_persisted_ips()
+        actual = self._list_blocked_rule_stats()
+        statuses: dict[str, dict[str, int | bool]] = {}
+
+        for ip in sorted(set(actual) | persisted):
+            stats = actual.get(ip, {})
+            statuses[ip] = {
+                "blocked": ip in actual or ip in persisted,
+                "active": ip in actual,
+                "packet_count": int(stats.get("packet_count", 0)),
+                "byte_count": int(stats.get("byte_count", 0)),
+            }
+
+        return statuses
 
     def generate_script(self, ips: list[str]) -> str:
         """Build a standalone shell script that applies the blocklist."""
@@ -220,32 +237,37 @@ class FirewallManager:
 
     def _list_blocked_ips(self) -> set[str]:
         """Parse iptables -L output for IPs blocked with our comment tag."""
+        return set(self._list_blocked_rule_stats())
+
+    def _list_blocked_rule_stats(self) -> dict[str, dict[str, int]]:
+        """Parse verbose iptables output for blocked IPs and hit counters."""
         try:
             result = self._run_iptables(
-                ["-L", self.chain, "-n", "--line-numbers"],
+                ["-L", self.chain, "-n", "-v", "--line-numbers"],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
-            return set()
+            return {}
 
-        ips: set[str] = set()
+        blocked: dict[str, dict[str, int]] = {}
+        pattern = re.compile(
+            rf"^\s*\d+\s+(\d+)\s+(\d+)\s+DROP\s+\S+\s+\S+\s+\S+\s+\S+\s+"
+            rf"(\d{{1,3}}(?:\.\d{{1,3}}){{3}})\s+\S+.*{re.escape(self.comment_prefix)}"
+        )
         for line in result.stdout.splitlines():
-            if self.comment_prefix not in line or "DROP" not in line:
+            match = pattern.match(line)
+            if match is None:
                 continue
-            # iptables -L -n columns: num target prot opt source destination [extras]
-            parts = line.split()
-            # Find source IP (column before destination, which is 0.0.0.0/0)
-            for i, part in enumerate(parts):
-                if re.match(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", part) and i > 0:
-                    # Skip destination (0.0.0.0/0 or similar any-address)
-                    if part == "0.0.0.0":
-                        continue
-                    ips.add(part)
-                    break  # only the first real IP (source)
 
-        return ips
+            packet_count, byte_count, ip = match.groups()
+            blocked[ip] = {
+                "packet_count": int(packet_count),
+                "byte_count": int(byte_count),
+            }
+
+        return blocked
 
 
 # ── CLI helpers ────────────────────────────────────────────────────────────

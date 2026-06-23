@@ -66,12 +66,19 @@ class FirewallManagerTests(unittest.TestCase):
     # ── list_blocks ────────────────────────────────────────────────────
 
     def test_list_blocks_returns_sorted_ips(self) -> None:
-        with patch.object(self.mgr, "_list_blocked_ips", return_value={"10.0.0.2", "10.0.0.1"}):
+        with patch.object(
+            self.mgr,
+            "_list_blocked_rule_stats",
+            return_value={
+                "10.0.0.2": {"packet_count": 0, "byte_count": 0},
+                "10.0.0.1": {"packet_count": 0, "byte_count": 0},
+            },
+        ):
             blocked = self.mgr.list_blocks()
         self.assertEqual(blocked, ["10.0.0.1", "10.0.0.2"])
 
     def test_list_blocks_empty(self) -> None:
-        with patch.object(self.mgr, "_list_blocked_ips", return_value=set()):
+        with patch.object(self.mgr, "_list_blocked_rule_stats", return_value={}):
             blocked = self.mgr.list_blocks()
         self.assertEqual(blocked, [])
 
@@ -84,7 +91,11 @@ class FirewallManagerTests(unittest.TestCase):
                 state_file=Path(tmpdir) / "blocked-ips.json",
             )
             mgr._save_persisted_ips(["10.0.0.7"])
-            with patch.object(mgr, "_list_blocked_ips", return_value={"10.0.0.8"}):
+            with patch.object(
+                mgr,
+                "_list_blocked_rule_stats",
+                return_value={"10.0.0.8": {"packet_count": 0, "byte_count": 0}},
+            ):
                 blocked = mgr.list_blocks()
         self.assertEqual(blocked, ["10.0.0.7", "10.0.0.8"])
 
@@ -135,17 +146,39 @@ class FirewallManagerTests(unittest.TestCase):
 
     def test_list_blocked_ips_parses_iptables_output(self) -> None:
         output = (
-            "Chain INPUT (policy ACCEPT)\n"
-            "num  target     prot opt source               destination\n"
-            "1    DROP       all  --  10.0.0.1             0.0.0.0/0            /* test-hp-block */\n"
-            "2    DROP       all  --  192.168.1.1          0.0.0.0/0            /* test-hp-block */\n"
-            "3    ACCEPT     all  --  0.0.0.0/0            0.0.0.0/0\n"
+            "Chain INPUT (policy ACCEPT 0 packets, 0 bytes)\n"
+            "num   pkts bytes target     prot opt in     out     source               destination\n"
+            "1        3   180 DROP       all  --  *      *       10.0.0.1             0.0.0.0/0            /* test-hp-block */\n"
+            "2       12   720 DROP       all  --  *      *       192.168.1.1          0.0.0.0/0            /* test-hp-block */\n"
+            "3        0     0 ACCEPT     all  --  *      *       0.0.0.0/0            0.0.0.0/0\n"
         )
         mock_result = MagicMock()
         mock_result.stdout = output
         with patch("subprocess.run", return_value=mock_result):
             ips = self.mgr._list_blocked_ips()
         self.assertEqual(ips, {"10.0.0.1", "192.168.1.1"})
+
+    def test_list_block_statuses_includes_live_firewall_counters(self) -> None:
+        output = (
+            "Chain INPUT (policy ACCEPT 0 packets, 0 bytes)\n"
+            "num   pkts bytes target     prot opt in     out     source               destination\n"
+            "1        7   420 DROP       all  --  *      *       10.0.0.7             0.0.0.0/0            /* test-hp-block */\n"
+        )
+        mock_result = MagicMock()
+        mock_result.stdout = output
+
+        with patch("subprocess.run", return_value=mock_result):
+            statuses = self.mgr.list_block_statuses()
+
+        self.assertEqual(
+            statuses["10.0.0.7"],
+            {
+                "blocked": True,
+                "active": True,
+                "packet_count": 7,
+                "byte_count": 420,
+            },
+        )
 
     def test_list_blocked_ips_handles_missing_iptables(self) -> None:
         with patch("subprocess.run", side_effect=FileNotFoundError):

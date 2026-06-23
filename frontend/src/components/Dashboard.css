@@ -615,6 +615,21 @@
   font-weight: 600;
 }
 
+.blocked-hit-status,
+.blocked-action-state {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.blocked-hit-status strong {
+  font-size: 0.95rem;
+}
+
+.blocked-action-note {
+  font-size: 0.75rem;
+}
+
 /* Timeline Panel */
 .timeline-panel {
   background: var(--bg-secondary);

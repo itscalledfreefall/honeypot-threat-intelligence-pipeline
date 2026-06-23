@@ -56,6 +56,9 @@ interface BlocklistCandidate {
   confidence: string;
   last_seen: string | null;
   blocked?: boolean;
+  block_active?: boolean;
+  blocked_packet_count?: number;
+  blocked_byte_count?: number;
 }
 
 interface FilterOptions {
@@ -266,7 +269,15 @@ const Dashboard: React.FC = () => {
       }
       setBlocklistCandidates((prev) =>
         prev.map((candidate) =>
-          candidate.ip === ip ? { ...candidate, blocked: true } : candidate
+          candidate.ip === ip
+            ? {
+                ...candidate,
+                blocked: true,
+                block_active: Boolean(data.block_active),
+                blocked_packet_count: Number(data.blocked_packet_count || 0),
+                blocked_byte_count: Number(data.blocked_byte_count || 0),
+              }
+            : candidate
         )
       );
       fetchBlocklist();
@@ -856,6 +867,7 @@ const Dashboard: React.FC = () => {
                       <th>Category</th>
                       <th>Confidence</th>
                       <th>Last Seen</th>
+                      <th>Blocked Hits</th>
                       <th>Action</th>
                     </tr>
                   </thead>
@@ -885,7 +897,26 @@ const Dashboard: React.FC = () => {
                         <td className="text-muted">{formatDateTime(candidate.last_seen)}</td>
                         <td>
                           {candidate.blocked ? (
-                            <span className="blocked-badge">Blocked</span>
+                            <div className="blocked-hit-status">
+                              <strong>{candidate.blocked_packet_count || 0}</strong>
+                              <span className="text-muted">
+                                {(candidate.blocked_packet_count || 0) > 0 ? 'packets dropped after block' : 'no post-block hits yet'}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-muted">Not blocked</span>
+                          )}
+                        </td>
+                        <td>
+                          {candidate.blocked ? (
+                            <div className="blocked-action-state">
+                              <span className="blocked-badge">
+                                {candidate.block_active === false ? 'Saved Only' : 'Blocked'}
+                              </span>
+                              <span className="text-muted blocked-action-note">
+                                {candidate.block_active === false ? 'Firewall rule not active' : `${candidate.blocked_byte_count || 0} bytes dropped`}
+                              </span>
+                            </div>
                           ) : (
                             <button
                               className="block-ip-btn"

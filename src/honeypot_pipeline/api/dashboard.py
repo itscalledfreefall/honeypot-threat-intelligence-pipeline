@@ -143,9 +143,14 @@ def create_app(
         )
 
     def _annotate_blocked_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        blocked_ips = set(_firewall_manager(apply=False).list_blocks())
+        block_statuses = _firewall_manager(apply=False).list_block_statuses()
         for candidate in candidates:
-            candidate["blocked"] = candidate.get("ip") in blocked_ips
+            ip = candidate.get("ip")
+            status = block_statuses.get(ip) if isinstance(ip, str) else None
+            candidate["blocked"] = bool(status)
+            candidate["block_active"] = bool(status and status.get("active"))
+            candidate["blocked_packet_count"] = int(status.get("packet_count", 0)) if status else 0
+            candidate["blocked_byte_count"] = int(status.get("byte_count", 0)) if status else 0
         return candidates
 
     def get_dataset() -> DashboardDataset:
@@ -691,9 +696,13 @@ def create_app(
             return jsonify({"error": f"Failed to apply firewall block: {exc}"}), 500
 
         blocked_ips = set(manager.list_blocks())
+        block_status = manager.list_block_statuses().get(raw_ip, {})
         return jsonify({
             "ip": raw_ip,
             "blocked": raw_ip in blocked_ips,
+            "block_active": bool(block_status.get("active")),
+            "blocked_packet_count": int(block_status.get("packet_count", 0)),
+            "blocked_byte_count": int(block_status.get("byte_count", 0)),
             "results": results,
         })
 
