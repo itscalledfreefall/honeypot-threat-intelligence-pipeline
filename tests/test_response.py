@@ -140,6 +140,20 @@ class FirewallManagerTests(unittest.TestCase):
             ips = _resolve_blocklist_ips(records_file=records_path)
             self.assertIn("10.0.0.99", ips)
 
+    def test_resolve_blocklist_from_jsonl_includes_local_only_risk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            records_path = Path(tmpdir) / "records.jsonl"
+            record = {
+                "source_ip": "10.0.0.42",
+                "event_type": "cowrie.login.failed",
+                "classification": {"attack_category": "brute_force", "severity": "medium"},
+            }
+            records_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+            ips = _resolve_blocklist_ips(records_file=records_path)
+
+        self.assertEqual(ips, ["10.0.0.42"])
+
     def test_resolve_blocklist_empty_when_no_sources(self) -> None:
         ips = _resolve_blocklist_ips()
         self.assertEqual(ips, [])

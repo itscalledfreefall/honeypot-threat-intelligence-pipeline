@@ -286,6 +286,22 @@ class DatabaseEventTests(unittest.TestCase):
         self.assertEqual(candidates[0]["malicious_event_count"], 1)
         self.assertEqual(candidates[0]["risk_level"], "critical")
 
+    def test_get_blocklist_candidates_include_local_only_risk(self) -> None:
+        self.db.insert_event(
+            self._make_record(
+                source_ip="192.0.2.44",
+                classification={"attack_category": "brute_force", "severity": "medium"},
+                threat_intel={"status": "not_requested", "score": {"is_malicious": False, "confidence": "low"}},
+                risk={"score": 30, "level": "low", "reasons": ["category:brute_force"]},
+            )
+        )
+
+        candidates = self.db.get_blocklist_candidates(limit=10)
+        summary = self.db.get_summary()
+
+        self.assertEqual([item["ip"] for item in candidates], ["192.0.2.44"])
+        self.assertEqual(summary["blocklist_count"], 1)
+
     def test_initialize_upgrades_older_db_before_creating_risk_indexes(self) -> None:
         legacy_path = Path(self.tmpdir.name) / "legacy.db"
         conn = sqlite3.connect(legacy_path)

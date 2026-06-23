@@ -7,7 +7,7 @@ from pathlib import Path
 
 from honeypot_pipeline.dashboard import create_app
 from honeypot_pipeline.dashboard_data import filter_records, load_dataset
-from honeypot_pipeline.reporting import build_blocklist_entries, collect_blocklist_ips, get_malicious_records
+from honeypot_pipeline.reporting import build_blocklist_entries, collect_blocklist_ips, get_malicious_records, is_block_candidate
 
 
 def _write_records(path: Path) -> None:
@@ -122,7 +122,7 @@ class DashboardDataTests(unittest.TestCase):
         blocklist_ips = collect_blocklist_ips(dataset.records)
 
         self.assertEqual(len(malicious_records), 1)
-        self.assertEqual(blocklist_ips, ["198.51.100.24"])
+        self.assertEqual(blocklist_ips, ["198.51.100.24", "203.0.113.10"])
 
     def test_build_blocklist_entries_orders_highest_threat_first(self) -> None:
         records = [
@@ -147,6 +147,17 @@ class DashboardDataTests(unittest.TestCase):
         self.assertEqual([entry["ip"] for entry in entries], ["198.51.100.50", "203.0.113.10"])
         self.assertGreater(entries[0]["threat_score"], entries[1]["threat_score"])
         self.assertEqual(collect_blocklist_ips(records), ["198.51.100.50", "203.0.113.10"])
+
+    def test_local_high_risk_record_is_block_candidate_without_threat_intel(self) -> None:
+        record = {
+            "source_ip": "192.0.2.44",
+            "timestamp": "2026-03-18T12:12:00.000000Z",
+            "event_type": "cowrie.login.failed",
+            "classification": {"attack_category": "brute_force", "severity": "medium"},
+        }
+
+        self.assertTrue(is_block_candidate(record))
+        self.assertEqual(collect_blocklist_ips([record]), ["192.0.2.44"])
 
 
 class DashboardJSONAPITests(unittest.TestCase):
@@ -268,6 +279,30 @@ class DashboardJSONAPITests(unittest.TestCase):
         data = response.get_json()
         self.assertEqual([item["ip"] for item in data["candidates"]], ["198.51.100.50", "203.0.113.10"])
         self.assertEqual(data["candidates"][0]["risk_level"], "critical")
+
+    def test_blocklist_candidates_include_local_only_attacker_ips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            records_path = Path(tmpdir) / "records.jsonl"
+            records = [
+                {
+                    "timestamp": "2026-03-18T12:12:00.000000Z",
+                    "event_type": "cowrie.login.failed",
+                    "source_ip": "192.0.2.44",
+                    "classification": {"attack_category": "brute_force", "severity": "medium"},
+                }
+            ]
+            records_path.write_text(
+                "\n".join(json.dumps(record) for record in records) + "\n",
+                encoding="utf-8",
+            )
+            app = create_app(records_path=records_path)
+
+            with app.test_client() as client:
+                response = client.get("/api/blocklist-candidates")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual([item["ip"] for item in data["candidates"]], ["192.0.2.44"])
 
     def test_sessions_endpoint_without_db(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -7,6 +7,7 @@ from .markdown import (
     collect_blocklist_ips,
     export_report_bundle,
     get_malicious_records,
+    is_block_candidate,
     is_record_malicious,
     main,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "collect_blocklist_ips",
     "export_report_bundle",
     "get_malicious_records",
+    "is_block_candidate",
     "is_record_malicious",
     "main",
 ]

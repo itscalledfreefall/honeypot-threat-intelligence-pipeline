@@ -9,6 +9,8 @@ from ..analysis.risk import risk_level, score_event_record
 from ..api.dashboard_data import load_dataset
 from ..storage import write_json_document
 
+_BLOCK_CANDIDATE_MIN_SCORE = 15
+
 
 def is_record_malicious(record: dict[str, Any]) -> bool:
     threat_intel = record.get("threat_intel")
@@ -54,6 +56,14 @@ def _record_risk(record: dict[str, Any]) -> tuple[int, str]:
     return score, level
 
 
+def is_block_candidate(record: dict[str, Any]) -> bool:
+    if is_record_malicious(record):
+        return True
+
+    score, _ = _record_risk(record)
+    return score >= _BLOCK_CANDIDATE_MIN_SCORE
+
+
 def build_blocklist_entries(
     records: list[dict[str, Any]],
     source_ip: str | None = None,
@@ -94,7 +104,7 @@ def build_blocklist_entries(
         )
         bucket["total_event_count"] += 1
 
-        if not is_record_malicious(record):
+        if not is_block_candidate(record):
             continue
 
         bucket["malicious_event_count"] += 1

@@ -117,6 +117,8 @@ DDL_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_attack_sessions_last_seen    ON attack_sessions(last_seen)",
 ]
 
+BLOCK_CANDIDATE_MIN_SCORE = 15
+
 SCHEMA_COLUMNS = {
     "events": {
         "risk_score": "INTEGER DEFAULT 0",
@@ -731,7 +733,14 @@ class Database:
                 "SELECT COUNT(*) FROM events WHERE is_malicious = 1"
             ).fetchone()[0]
             blocklist_count = conn.execute(
-                "SELECT COUNT(*) FROM threat_intel WHERE combined_is_malicious = 1"
+                """
+                SELECT COUNT(DISTINCT source_ip)
+                  FROM events
+                 WHERE source_ip IS NOT NULL
+                   AND source_ip != ''
+                   AND (is_malicious = 1 OR risk_score >= ?)
+                """,
+                (BLOCK_CANDIDATE_MIN_SCORE,),
             ).fetchone()[0]
 
             categories = conn.execute(
@@ -805,10 +814,10 @@ class Database:
         source_ip: str | None = None,
     ) -> list[dict[str, Any]]:
         where = ["e.source_ip IS NOT NULL", "e.source_ip != ''"]
-        params: list[Any] = []
+        filter_params: list[Any] = []
         if source_ip:
             where.append("e.source_ip LIKE ?")
-            params.append(f"{source_ip}%")
+            filter_params.append(f"{source_ip}%")
 
         where_clause = " AND ".join(where)
         with self.connection() as conn:
@@ -817,12 +826,12 @@ class Database:
                 WITH grouped AS (
                     SELECT e.source_ip,
                            COUNT(*) AS total_event_count,
-                           SUM(CASE WHEN e.is_malicious = 1 THEN 1 ELSE 0 END) AS malicious_event_count,
-                           MAX(CASE WHEN e.is_malicious = 1 THEN e.risk_score ELSE 0 END) AS threat_score,
-                           AVG(CASE WHEN e.is_malicious = 1 THEN e.risk_score END) AS avg_risk_score,
-                           MAX(CASE WHEN e.is_malicious = 1 THEN e.timestamp ELSE NULL END) AS last_seen,
+                           SUM(CASE WHEN e.is_malicious = 1 OR e.risk_score >= ? THEN 1 ELSE 0 END) AS malicious_event_count,
+                           MAX(CASE WHEN e.is_malicious = 1 OR e.risk_score >= ? THEN e.risk_score ELSE 0 END) AS threat_score,
+                           AVG(CASE WHEN e.is_malicious = 1 OR e.risk_score >= ? THEN e.risk_score END) AS avg_risk_score,
+                           MAX(CASE WHEN e.is_malicious = 1 OR e.risk_score >= ? THEN e.timestamp ELSE NULL END) AS last_seen,
                            MAX(
-                               CASE WHEN e.is_malicious = 1 THEN
+                               CASE WHEN e.is_malicious = 1 OR e.risk_score >= ? THEN
                                    CASE COALESCE(ti.combined_confidence, '')
                                        WHEN 'high' THEN 3
                                        WHEN 'medium' THEN 2
@@ -835,7 +844,7 @@ class Database:
                       LEFT JOIN threat_intel ti ON ti.event_id = e.id
                      WHERE {where_clause}
                      GROUP BY e.source_ip
-                    HAVING SUM(CASE WHEN e.is_malicious = 1 THEN 1 ELSE 0 END) > 0
+                    HAVING SUM(CASE WHEN e.is_malicious = 1 OR e.risk_score >= ? THEN 1 ELSE 0 END) > 0
                 )
                 SELECT g.*,
                        CASE g.confidence_rank
@@ -848,7 +857,7 @@ class Database:
                            SELECT e2.attack_category
                              FROM events e2
                             WHERE e2.source_ip = g.source_ip
-                              AND e2.is_malicious = 1
+                              AND (e2.is_malicious = 1 OR e2.risk_score >= ?)
                               AND e2.attack_category IS NOT NULL
                             GROUP BY e2.attack_category
                             ORDER BY COUNT(*) DESC, MAX(e2.risk_score) DESC, e2.attack_category ASC
@@ -860,9 +869,19 @@ class Database:
                           g.avg_risk_score DESC,
                           g.last_seen DESC,
                           g.source_ip ASC
-                 LIMIT ?
+                LIMIT ?
                 """,
-                params + [limit],
+                [
+                    BLOCK_CANDIDATE_MIN_SCORE,
+                    BLOCK_CANDIDATE_MIN_SCORE,
+                    BLOCK_CANDIDATE_MIN_SCORE,
+                    BLOCK_CANDIDATE_MIN_SCORE,
+                    BLOCK_CANDIDATE_MIN_SCORE,
+                    *filter_params,
+                    BLOCK_CANDIDATE_MIN_SCORE,
+                    BLOCK_CANDIDATE_MIN_SCORE,
+                    limit,
+                ],
             ).fetchall()
 
         return [

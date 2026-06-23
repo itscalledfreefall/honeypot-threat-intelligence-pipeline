@@ -12,6 +12,7 @@ from .reporting import (
     collect_blocklist_ips,
     export_report_bundle,
     get_malicious_records,
+    is_block_candidate,
     is_record_malicious,
 )
 from .response import FirewallManager
@@ -52,6 +53,7 @@ __all__ = [
     "filter_records",
     "FirewallManager",
     "get_malicious_records",
+    "is_block_candidate",
     "is_record_malicious",
     "iter_normalized_cowrie_events",
     "load_dataset",

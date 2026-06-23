@@ -222,7 +222,7 @@ class FirewallManager:
 def _resolve_blocklist_ips(
     records_file: Path | None = None,
     db_path: Path | None = None,
-    malicious_only: bool = True,
+    malicious_only: bool = False,
 ) -> list[str]:
     """Collect blocklist IPs from JSONL records or database."""
 
