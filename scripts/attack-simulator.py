@@ -387,8 +387,31 @@ def run_attack_session(
         )
         os.close(slave_fd)
 
-        # Wait for shell prompt
-        _human_delay(0.5, 1.0)
+        # Wait for shell prompt — read from PTY until we see a prompt or timeout.
+        # Cowrie presents a shell prompt like "root@cowrie:~#" within 1-3s.
+        # Commands sent before the prompt appears get swallowed by the PTY.
+        _human_delay(2.0, 3.5)
+
+        # Drain any pending output (banner, motd) so our commands are clean
+        try:
+            import fcntl as _fcntl
+            for fd in (master_fd,):
+                flags = _fcntl.fcntl(fd, _fcntl.F_GETFL)
+                _fcntl.fcntl(fd, _fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            # Non-blocking drain
+            import time as _t
+            deadline = _t.time() + 1.0
+            while _t.time() < deadline:
+                try:
+                    os.read(master_fd, 4096)
+                except OSError:
+                    break
+            # Restore blocking mode
+            for fd in (master_fd,):
+                flags = _fcntl.fcntl(fd, _fcntl.F_GETFL)
+                _fcntl.fcntl(fd, _fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+        except (ImportError, OSError):
+            pass
 
         for cmd_template, min_delay, max_delay in playbook:
             cmd = _format_cmd(cmd_template, ip, domain)

@@ -397,8 +397,25 @@ def run_live_attack_session(
         )
         os.close(slave_fd)
 
-        # Wait for shell prompt
-        _human_delay(1.0, 2.0)
+        # Wait for shell prompt — Cowrie takes 1-3s to present the prompt.
+        # Commands sent before the prompt get swallowed by the PTY.
+        _human_delay(2.0, 3.5)
+
+        # Drain any pending output (banner, motd) so our commands are clean
+        try:
+            import fcntl as _fcntl
+            flags = _fcntl.fcntl(master_fd, _fcntl.F_GETFL)
+            _fcntl.fcntl(master_fd, _fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            import time as _t
+            deadline = _t.time() + 1.0
+            while _t.time() < deadline:
+                try:
+                    os.read(master_fd, 4096)
+                except OSError:
+                    break
+            _fcntl.fcntl(master_fd, _fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+        except (ImportError, OSError):
+            pass
 
         for cmd_template in commands:
             cmd = cmd_template.format(ip=ip, domain=domain, port=random.randint(1024, 65535))
