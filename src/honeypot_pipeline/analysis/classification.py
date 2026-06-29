@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from ..models import NormalizedEvent
 
+# ── Category marker tuples ──────────────────────────────────────────────
+
 _DOWNLOAD_MARKERS = (
     "wget ",
     "curl ",
@@ -11,6 +13,83 @@ _DOWNLOAD_MARKERS = (
     "iwr ",
     "certutil ",
     "bitsadmin ",
+)
+
+_REVERSE_SHELL_MARKERS = (
+    "/dev/tcp/",
+    "/dev/udp/",
+    "bash -i >&",
+    "sh -i >&",
+    "nc -e ",
+    "-e /bin/bash",
+    "-e /bin/sh",
+    "python -c 'import socket",
+    "python3 -c 'import socket",
+    "perl -e 'use Socket",
+    "php -r '$sock",
+    "ruby -rsocket -e",
+    "mkfifo /tmp/",
+    "socat exec:",
+    "exec 5<>/dev/tcp",
+    "sh -i 2>&1",
+    "bash -c 'exec bash",
+)
+
+_DATA_EXFIL_MARKERS = (
+    "curl -x post",
+    "curl --data",
+    "curl -d @",
+    "wget --post-data",
+    "tar czf - | nc",
+    "tar czf - |",
+    "ngrok",
+    "frpc -c",
+    "chisel client",
+    "nohup ngrok",
+    "scp -r ",
+)
+
+_LATERAL_MOVEMENT_MARKERS = (
+    "sshpass",
+    "ssh -o StrictHostKeyChecking=no",
+    "ssh-keyscan",
+    "ssh -o UserKnownHostsFile=/dev/null",
+    "rsync -avz",
+    "rsync -av",
+    "putty",
+    "plink",
+)
+
+_NETWORK_SCAN_MARKERS = (
+    "nmap ",
+    "masscan ",
+    "zmap ",
+    "nc -zv ",
+    "/usr/sbin/nmap",
+    "/usr/bin/masscan",
+    "zenmap",
+)
+
+_DOCKER_ESCAPE_MARKERS = (
+    "docker run -v /:/host",
+    "docker exec -it",
+    "/var/run/docker.sock",
+    "docker.sock",
+    "nsenter -t 1",
+    "nsenter --target 1",
+    "crictl exec",
+    "ctr t exec",
+    "chroot /host",
+    "unshare -",
+)
+
+_CLOUD_METADATA_MARKERS = (
+    "169.254.169.254",
+    "metadata.google.internal",
+    "metadata.tencentyun.com",
+    "100.100.100.200",
+    "instance-data",
+    "latest/meta-data",
 )
 
 _RECON_MARKERS = (
@@ -25,6 +104,12 @@ _RECON_MARKERS = (
     "ss ",
     "ps ",
     "cat /etc/passwd",
+    "lsblk",
+    "lscpu",
+    "lspci",
+    "lsmod",
+    "dmidecode",
+    "systemd-detect-virt",
 )
 
 _PERSISTENCE_MARKERS = (
@@ -77,6 +162,11 @@ _CRYPTOMINING_MARKERS = (
     "--algo ",
     "cryptonight",
     "randomx",
+    "kinsing",
+    "kdevtmpfsi",
+    "pwnrigl",
+    "sysrv",
+    "syst3m",
 )
 
 _OBFUSCATION_MARKERS = (
@@ -87,7 +177,6 @@ _OBFUSCATION_MARKERS = (
     "sh -c",
     "| sh",
     "| bash",
-    "/dev/tcp/",
 )
 
 _DEFENSE_EVASION_MARKERS = (
@@ -104,6 +193,10 @@ _DEFENSE_EVASION_MARKERS = (
     "systemctl stop",
     "service stop",
     "ufw disable",
+    "setenforce 0",
+    "iptables -f",
+    "chattr -i",
+    "apparmor_parser -r",
 )
 
 _DESTRUCTIVE_MARKERS = (
@@ -161,19 +254,25 @@ def classify_event(event: NormalizedEvent) -> dict[str, str]:
         classification["reason"] = "Authentication activity was observed on the honeypot."
         return classification
 
-    if "file_download" in event_type or event.url or _contains_any(command, _DOWNLOAD_MARKERS):
-        classification["attack_category"] = "malware_download"
+    # ── High-fidelity, high-severity checks first ─────────────────────
+
+    if _contains_any(command, _REVERSE_SHELL_MARKERS):
+        classification["attack_category"] = "reverse_shell"
         classification["severity"] = "high"
-        classification["reason"] = "The event contains payload download behavior."
+        classification["reason"] = "The command attempts to establish a reverse shell connection."
         return classification
 
-    if _contains_any(command, _PERSISTENCE_MARKERS):
-        classification["attack_category"] = "persistence"
+    if _contains_any(command, _CLOUD_METADATA_MARKERS):
+        classification["attack_category"] = "cloud_metadata_access"
         classification["severity"] = "high"
-        classification["reason"] = "The command suggests an attempt to maintain access."
+        classification["reason"] = "The command targets cloud instance metadata endpoints to steal credentials or tokens."
         return classification
 
-    # ── New high-confidence specific categories (before generic fallback) ────
+    if _contains_any(command, _DOCKER_ESCAPE_MARKERS):
+        classification["attack_category"] = "container_escape"
+        classification["severity"] = "high"
+        classification["reason"] = "The command attempts to escape a container or access the underlying host."
+        return classification
 
     if _contains_any(command, _DESTRUCTIVE_MARKERS):
         classification["attack_category"] = "destructive_action"
@@ -185,6 +284,30 @@ def classify_event(event: NormalizedEvent) -> dict[str, str]:
         classification["attack_category"] = "cryptomining"
         classification["severity"] = "high"
         classification["reason"] = "The command references cryptomining tools or pool connections."
+        return classification
+
+    if _contains_any(command, _DATA_EXFIL_MARKERS):
+        classification["attack_category"] = "data_exfiltration"
+        classification["severity"] = "high"
+        classification["reason"] = "The command suggests data is being transmitted to an external destination."
+        return classification
+
+    if "file_download" in event_type or event.url or _contains_any(command, _DOWNLOAD_MARKERS):
+        classification["attack_category"] = "malware_download"
+        classification["severity"] = "high"
+        classification["reason"] = "The event contains payload download behavior."
+        return classification
+
+    if _contains_any(command, _LATERAL_MOVEMENT_MARKERS):
+        classification["attack_category"] = "lateral_movement"
+        classification["severity"] = "high"
+        classification["reason"] = "The command indicates an attempt to access or spread to other hosts."
+        return classification
+
+    if _contains_any(command, _PERSISTENCE_MARKERS):
+        classification["attack_category"] = "persistence"
+        classification["severity"] = "high"
+        classification["reason"] = "The command suggests an attempt to maintain access."
         return classification
 
     if _contains_any(command, _DEFENSE_EVASION_MARKERS):
@@ -205,6 +328,12 @@ def classify_event(event: NormalizedEvent) -> dict[str, str]:
         classification["reason"] = "The command targets credential files, keys, or sensitive configuration."
         return classification
 
+    if _contains_any(command, _NETWORK_SCAN_MARKERS):
+        classification["attack_category"] = "network_scan"
+        classification["severity"] = "medium"
+        classification["reason"] = "The command scans the network or enumerates remote hosts."
+        return classification
+
     if _contains_any(command, _RECON_MARKERS):
         classification["attack_category"] = "reconnaissance"
         classification["severity"] = "low"
@@ -223,7 +352,7 @@ def classify_event(event: NormalizedEvent) -> dict[str, str]:
         classification["reason"] = "The attacker executed a command on the honeypot."
         return classification
 
-    # ── Session / connection lifecycle events (no attacker command) ──────────
+    # ── Session / connection lifecycle events (no attacker command) ──
 
     if "direct-tcpip" in event_type:
         classification["attack_category"] = "connection"

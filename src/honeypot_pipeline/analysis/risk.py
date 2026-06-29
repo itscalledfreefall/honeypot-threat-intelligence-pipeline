@@ -6,6 +6,7 @@ from typing import Any
 _CATEGORY_POINTS = {
     "brute_force": 15,
     "reconnaissance": 10,
+    "network_scan": 15,
     "command_execution": 20,
     "malware_download": 35,
     "persistence": 40,
@@ -15,6 +16,11 @@ _CATEGORY_POINTS = {
     "defense_evasion": 30,
     "credential_access": 25,
     "obfuscation": 20,
+    "reverse_shell": 40,
+    "cloud_metadata_access": 40,
+    "data_exfiltration": 35,
+    "lateral_movement": 35,
+    "container_escape": 40,
 }
 
 _SEVERITY_POINTS = {
@@ -146,6 +152,8 @@ def score_session_snapshot(
         score += 25
         reasons.append("malicious_source_ip")
 
+    # ── Combo detections ─────────────────────────────────────────────
+
     if "persistence" in categories and "malware_download" in categories:
         score += 15
         reasons.append("download_plus_persistence")
@@ -173,6 +181,40 @@ def score_session_snapshot(
     if "obfuscation" in categories and "malware_download" in categories:
         score += 10
         reasons.append("obfuscated_download")
+
+    # ── New combo rules ──────────────────────────────────────────────
+
+    if "reverse_shell" in categories and "defense_evasion" in categories:
+        score += 15
+        reasons.append("reverse_shell_plus_evasion")
+
+    if "reverse_shell" in categories and "malware_download" in categories:
+        score += 15
+        reasons.append("reverse_shell_plus_download")
+
+    if "lateral_movement" in categories and "credential_access" in categories:
+        score += 15
+        reasons.append("lateral_movement_with_creds")
+
+    if "cloud_metadata_access" in categories and "data_exfiltration" in categories:
+        score += 20
+        reasons.append("cloud_cred_theft_and_exfil")
+
+    if "container_escape" in categories and "persistence" in categories:
+        score += 20
+        reasons.append("container_escape_plus_persistence")
+
+    if "lateral_movement" in categories and "defense_evasion" in categories:
+        score += 10
+        reasons.append("lateral_movement_plus_evasion")
+
+    if "network_scan" in categories and "brute_force" in categories:
+        score += 10
+        reasons.append("scan_plus_bruteforce")
+
+    if "reverse_shell" in categories and "cryptomining" in categories:
+        score += 10
+        reasons.append("reverse_shell_plus_mining")
 
     score = _clamp_score(score)
     return {

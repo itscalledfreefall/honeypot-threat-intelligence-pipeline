@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import socket
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -358,71 +360,61 @@ def run_attack_session(
     playbook: list[tuple[str, float, float]],
     connect_timeout: int = 10,
 ) -> bool:
-    """Open an interactive SSH session and run a playbook with delays.
+    """Open an interactive SSH session against Cowrie and run a playbook.
 
-    Returns True if authentication succeeded (even if commands later fail).
+    Uses sshpass + ssh with a PTY so Cowrie captures every command naturally.
+    Returns True if the session completed (even if some commands failed).
     """
-    import paramiko  # lazy import — offline mode does not need SSH
+    import pty as _pty
 
     ip = host
     domain = _safe_domain()
 
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
     try:
-        client.connect(
-            hostname=host,
-            port=port,
-            username=username,
-            password=password,
-            allow_agent=False,
-            look_for_keys=False,
-            timeout=connect_timeout,
+        master_fd, slave_fd = _pty.openpty()
+        proc = subprocess.Popen(
+            [
+                "sshpass", "-p", password,
+                "ssh", "-tt",
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "UserKnownHostsFile=/dev/null",
+                "-o", f"ConnectTimeout={connect_timeout}",
+                "-p", str(port),
+                f"{username}@{host}",
+            ],
+            stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+            close_fds=True,
         )
-    except paramiko.AuthenticationException:
-        print(f"  [-] {username}:{password} — AUTH FAILED")
-        return False
-    except (socket.error, paramiko.SSHException, OSError) as exc:
-        print(f"  [!] {username}:{password} — CONNECTION ERROR: {exc}")
-        return False
+        os.close(slave_fd)
 
-    # Open an interactive shell channel (PTY — Cowrie captures this)
-    try:
-        channel = client.invoke_shell(width=120, height=40)
+        # Wait for shell prompt
         _human_delay(0.5, 1.0)
-
-        # Drain the initial banner/motd
-        if channel.recv_ready():
-            channel.recv(4096)
 
         for cmd_template, min_delay, max_delay in playbook:
             cmd = _format_cmd(cmd_template, ip, domain)
-            channel.send((cmd + "\n").encode("utf-8"))
+            os.write(master_fd, (cmd + "\n").encode())
             _human_delay(min_delay, max_delay)
 
-            # Wait for output to settle
-            settle = 0
-            while settle < 3:
-                if channel.recv_ready():
-                    channel.recv(4096)
-                    settle = 0
-                else:
-                    _human_delay(0.1, 0.3)
-                    settle += 1
-
-        # Clean exit
-        channel.send(b"exit\n")
+        os.write(master_fd, b"exit\n")
         _human_delay(0.2, 0.5)
-        channel.close()
 
-    except (socket.error, paramiko.SSHException, OSError) as exc:
-        print(f"  [!] {username}:{password} — SESSION ERROR: {exc}")
-    finally:
-        client.close()
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
-    print(f"  [+] {username}:{password} — OK ({len(playbook)} commands)")
-    return True
+        os.close(master_fd)
+
+        print(f"  [+] {username}:{password} — OK ({len(playbook)} commands)")
+        return True
+
+    except FileNotFoundError:
+        print("  ✗ sshpass not found. Install: sudo apt-get install sshpass")
+        return False
+    except OSError as exc:
+        print(f"  [!] {username}:{password} — CONNECTION ERROR: {exc}")
+        return False
 
 
 def build_playbook(
@@ -472,6 +464,79 @@ def build_playbook(
         return cmds
 
     return [("exit", 0.1, 0.3)]
+
+
+# ── Live injection into running pipeline ────────────────────────────────
+
+_COWRIE_LOG_FILE = "cowrie.json"
+
+
+def _get_cowrie_volume_name() -> str | None:
+    """Return the Docker volume name for the Cowrie logs, or None if not found."""
+    # Use script's parent directory as project root, not cwd.
+    try:
+        script_dir = Path(__file__).resolve().parent
+        project_root = script_dir.parent.name
+    except (NameError, AttributeError):
+        project_root = Path.cwd().name
+    project = os.environ.get("COMPOSE_PROJECT_NAME", project_root)
+    volume = f"{project}_cowrie-logs"
+    try:
+        result = subprocess.run(
+            ["docker", "volume", "inspect", volume],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            return volume
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def inject_to_live_pipeline(filepath: Path) -> bool:
+    """Append a Cowrie JSONL file into the running pipeline's log volume."""
+    volume = _get_cowrie_volume_name()
+    if volume is None:
+        print("  ✗ Cannot find Cowrie log volume. Is 'docker compose up -d' running?")
+        return False
+
+    filepath = filepath.resolve()
+    if not filepath.exists():
+        print(f"  ✗ File not found: {filepath}")
+        return False
+
+    line_count = 0
+    with open(filepath, "r") as fh:
+        for _ in fh:
+            line_count += 1
+
+    try:
+        with open(filepath, "r") as fh:
+            result = subprocess.run(
+                [
+                    "docker", "run", "--rm", "-i",
+                    "-v", f"{volume}:/logs",
+                    "busybox",
+                    "sh", "-c", f"cat >> /logs/{_COWRIE_LOG_FILE}",
+                ],
+                stdin=fh,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        if result.returncode != 0:
+            print(f"  ✗ Injection failed: {result.stderr.strip()}")
+            return False
+    except FileNotFoundError:
+        print("  ✗ Docker not found. Is it installed and running?")
+        return False
+    except subprocess.TimeoutExpired:
+        print("  ✗ Docker injection timed out.")
+        return False
+
+    print(f"  ✓ Injected {line_count} events into live pipeline")
+    print(f"  → Dashboard: http://localhost:5173")
+    return True
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────
@@ -548,27 +613,39 @@ def main() -> int:
             "Without this flag, live mode blocks scenarios that could damage a real server."
         ),
     )
+    parser.add_argument(
+        "--live", action="store_true",
+        help="Auto-inject generated events into the running Docker pipeline.",
+    )
     args = parser.parse_args()
 
     # ── Offline mode ──
-    if args.offline_output:
+    if args.offline_output or args.live:
+        offline_output = args.offline_output
+        if not offline_output:
+            ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+            offline_output = f"/tmp/attack-sim-{ts}.json"
         scenario = args.scenario or "full-chain"
         print(f"\n{'='*60}")
         print("Honeypot Attack Simulator (Offline — Safe JSON Only)")
         print(f"Scenario: {scenario}")
-        print(f"Output:   {args.offline_output}")
+        print(f"Output:   {offline_output}")
         print(f"Sessions: {args.count}")
         print(f"Source IP: {args.source_ip or 'random (safe range)'}")
         print(f"{'='*60}\n")
 
         written = generate_offline_scenario(
             scenario=scenario,
-            output_path=args.offline_output,
+            output_path=offline_output,
             count=args.count,
             source_ip=args.source_ip,
             session_prefix=args.session_id_prefix,
         )
-        print(f"\nDone. {written} events written to {args.offline_output} ({args.count} sessions).")
+        print(f"Done. {written} events written to {offline_output} ({args.count} sessions).")
+
+        if args.live:
+            print()
+            inject_to_live_pipeline(Path(offline_output))
         return 0
 
     # ── Live Paramiko mode ──
@@ -589,7 +666,7 @@ def main() -> int:
     playbook_type = "brute" if args.brute_only else "full"
 
     print(f"\n{'='*60}")
-    print("Honeypot Attack Simulator (Paramiko — Interactive TTY)")
+    print("Honeypot Attack Simulator (sshpass + PTY — Interactive TTY)")
     print(f"Target: {args.host}:{args.port}")
     print(f"Plan: {args.sessions} sessions")
     if args.scenario:
