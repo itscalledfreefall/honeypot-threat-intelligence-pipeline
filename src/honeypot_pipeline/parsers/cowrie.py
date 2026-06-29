@@ -47,10 +47,10 @@ def iter_normalized_cowrie_events(lines: Iterable[str]) -> Iterator[NormalizedEv
 
         try:
             payload = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid JSON on line {line_number}") from exc
+        except json.JSONDecodeError:
+            continue
 
         if not isinstance(payload, dict):
-            raise ValueError(f"Expected JSON object on line {line_number}")
+            continue
 
         yield normalize_cowrie_event(payload)

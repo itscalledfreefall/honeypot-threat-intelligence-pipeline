@@ -118,6 +118,7 @@ DDL_STATEMENTS = [
 ]
 
 BLOCK_CANDIDATE_MIN_SCORE = 15
+_LIFECYCLE_ATTACK_CATEGORIES = {"session", "connection", "unknown"}
 
 SCHEMA_COLUMNS = {
     "events": {
@@ -572,8 +573,17 @@ class Database:
 
             if existing:
                 cats = json.loads(existing["attack_categories"] or "[]")
-                if category not in cats:
+                if category in {"session", "connection"} and any(
+                    cat not in _LIFECYCLE_ATTACK_CATEGORIES for cat in cats
+                ):
+                    pass
+                elif category not in cats:
                     cats.append(category)
+                if category not in _LIFECYCLE_ATTACK_CATEGORIES:
+                    cats = [
+                        cat for cat in cats
+                        if cat not in _LIFECYCLE_ATTACK_CATEGORIES
+                    ]
 
                 sev = json.loads(existing["severity_counts"] or "{}")
                 sev[severity] = sev.get(severity, 0) + 1

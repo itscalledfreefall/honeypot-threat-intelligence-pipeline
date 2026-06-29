@@ -64,9 +64,14 @@ class CowrieParserTests(unittest.TestCase):
             ],
         )
 
-    def test_rejects_invalid_json_line(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Invalid JSON on line 1"):
-            list(iter_normalized_cowrie_events(['{"eventid":']))
+    def test_skips_invalid_json_line(self) -> None:
+        lines = [
+            '{"eventid":',
+            '{"eventid":"cowrie.command.input","src_ip":"198.51.100.24","input":"whoami"}',
+        ]
+
+        [event] = list(iter_normalized_cowrie_events(lines))
+        self.assertEqual(event.event_type, "cowrie.command.input")
 
 
 if __name__ == "__main__":
