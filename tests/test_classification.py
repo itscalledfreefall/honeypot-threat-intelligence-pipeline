@@ -477,6 +477,57 @@ class ClassificationTests(unittest.TestCase):
         classification = classify_event(event)
         self.assertEqual(classification["attack_category"], "data_exfiltration")
 
+    # ── DDoS ─────────────────────────────────────────────────────────────
+
+    def test_classifies_hping3_flood_as_ddos(self) -> None:
+        event = _make_command_event("hping3 --flood -S -p 80 203.0.113.50")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "ddos")
+        self.assertEqual(classification["severity"], "high")
+
+    def test_classifies_slowloris_as_ddos(self) -> None:
+        event = _make_command_event("slowloris 203.0.113.50 80")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "ddos")
+
+    def test_classifies_goldeneye_as_ddos(self) -> None:
+        event = _make_command_event("goldeneye 203.0.113.50 80")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "ddos")
+
+    def test_classifies_synflood_as_ddos(self) -> None:
+        event = _make_command_event("python3 synflood.py 203.0.113.50 80")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "ddos")
+
+    def test_classifies_stresser_as_ddos(self) -> None:
+        event = _make_command_event("/tmp/stresser --target 203.0.113.50 --port 80")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "ddos")
+
+    def test_classifies_botnet_command_as_ddos(self) -> None:
+        event = _make_command_event("nohup /tmp/botnet --connect c2.example.com &")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "ddos")
+
+    def test_classifies_ntp_amplification_as_ddos(self) -> None:
+        event = _make_command_event("python3 amp.py --type ntp amplify 203.0.113.50")
+        classification = classify_event(event)
+        self.assertEqual(classification["attack_category"], "ddos")
+
+    def test_ddos_beats_command_execution(self) -> None:
+        """hping3 must classify as ddos, not generic command_execution."""
+        event = _make_command_event("hping3 --flood -S -p 443 203.0.113.50")
+        classification = classify_event(event)
+        self.assertNotEqual(classification["attack_category"], "command_execution")
+        self.assertEqual(classification["attack_category"], "ddos")
+
+    def test_ddos_does_not_fire_on_empty_command(self) -> None:
+        """No DDoS marker present → must not classify as ddos."""
+        event = _make_command_event("whoami")
+        classification = classify_event(event)
+        self.assertNotEqual(classification["attack_category"], "ddos")
+
 
 if __name__ == "__main__":
     unittest.main()

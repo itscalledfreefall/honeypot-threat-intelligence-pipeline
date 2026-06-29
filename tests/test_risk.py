@@ -230,5 +230,41 @@ class RiskScoringTests(unittest.TestCase):
         self.assertIn("destructive_action_present", risk["reasons"])
 
 
+    # ── DDoS risk scoring ─────────────────────────────────────────────
+
+    def test_ddos_event_scores_high(self) -> None:
+        risk = score_event_record(
+            {
+                "event_type": "cowrie.command.input",
+                "classification": {
+                    "attack_category": "ddos",
+                    "severity": "high",
+                },
+                "indicators": {},
+            }
+        )
+        self.assertEqual(risk["score"], 65)  # 35 + 30 = 65
+        self.assertIn("category:ddos", risk["reasons"])
+
+    def test_ddos_with_bruteforce_combo(self) -> None:
+        risk = score_session_snapshot(
+            event_count=50,
+            attack_categories=["ddos", "brute_force"],
+            severity_counts={"medium": 30, "high": 10},
+            is_malicious=True,
+        )
+        self.assertIn("ddos_with_bruteforce", risk["reasons"])
+        self.assertEqual(risk["level"], "critical")
+
+    def test_ddos_botnet_persistence_combo(self) -> None:
+        risk = score_session_snapshot(
+            event_count=20,
+            attack_categories=["ddos", "persistence"],
+            severity_counts={"high": 5},
+            is_malicious=False,
+        )
+        self.assertIn("ddos_botnet_persistence", risk["reasons"])
+
+
 if __name__ == "__main__":
     unittest.main()

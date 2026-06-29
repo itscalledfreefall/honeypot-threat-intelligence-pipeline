@@ -21,6 +21,7 @@ _CATEGORY_POINTS = {
     "data_exfiltration": 35,
     "lateral_movement": 35,
     "container_escape": 40,
+    "ddos": 35,
 }
 
 _SEVERITY_POINTS = {
@@ -215,6 +216,18 @@ def score_session_snapshot(
     if "reverse_shell" in categories and "cryptomining" in categories:
         score += 10
         reasons.append("reverse_shell_plus_mining")
+
+    if "ddos" in categories and "brute_force" in categories:
+        score += 15
+        reasons.append("ddos_with_bruteforce")
+
+    if "ddos" in categories and "persistence" in categories:
+        score += 15
+        reasons.append("ddos_botnet_persistence")
+
+    if "ddos" in categories and "cryptomining" in categories:
+        score += 10
+        reasons.append("ddos_plus_cryptomining")
 
     score = _clamp_score(score)
     return {

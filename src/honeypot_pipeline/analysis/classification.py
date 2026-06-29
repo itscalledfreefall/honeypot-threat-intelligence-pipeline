@@ -70,6 +70,32 @@ _NETWORK_SCAN_MARKERS = (
     "zenmap",
 )
 
+_DDOS_MARKERS = (
+    "hping3",
+    "hping --flood",
+    "nping --flood",
+    "slowloris",
+    "goldeneye",
+    "pyloris",
+    "synflood",
+    "udpflood",
+    "icmpflood",
+    "httpflood",
+    "flood.pl",
+    "flood.py",
+    "ddos-agent",
+    "ddos_agent",
+    "stresser",
+    "booter",
+    "botnet",
+    "--flood",
+    "ntp amplify",
+    "dns amplify",
+    "memcached amplification",
+    "ssdp amplify",
+    "amplification attack",
+)
+
 _DOCKER_ESCAPE_MARKERS = (
     "docker run -v /:/host",
     "docker exec -it",
@@ -272,6 +298,12 @@ def classify_event(event: NormalizedEvent) -> dict[str, str]:
         classification["attack_category"] = "container_escape"
         classification["severity"] = "high"
         classification["reason"] = "The command attempts to escape a container or access the underlying host."
+        return classification
+
+    if _contains_any(command, _DDOS_MARKERS):
+        classification["attack_category"] = "ddos"
+        classification["severity"] = "high"
+        classification["reason"] = "The command launches or coordinates a DDoS attack against a target."
         return classification
 
     if _contains_any(command, _DESTRUCTIVE_MARKERS):
